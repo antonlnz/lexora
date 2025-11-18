@@ -152,7 +152,7 @@ export function ContentCard({ content, viewMode, onOpenViewer }: ContentCardProp
               >
                 {isRead ? "Mark Unread" : "Mark Read"}
               </Button>
-              <Button size="sm" className="glass" onClick={handleOpenInNewTab}>
+              <Button size="sm" className="default" onClick={handleOpenInNewTab}>
                 <ExternalLink className="h-3 w-3 mr-2" />
                 Read
               </Button>

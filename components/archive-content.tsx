@@ -32,14 +32,14 @@ export function ArchiveContent() {
                 placeholder="Search your archive..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 glass"
+                className="pl-10 glass hover-lift-subtle"
               />
             </div>
-            <Button variant="outline" className="glass bg-transparent">
+            <Button variant="outline" className="glass bg-transparent hover-lift-subtle">
               <Filter className="h-4 w-4 mr-2" />
               Filters
             </Button>
-            <Button variant="outline" className="glass bg-transparent">
+            <Button variant="outline" className="glass bg-transparent hover-lift-subtle">
               <Download className="h-4 w-4 mr-2" />
               Export
             </Button>

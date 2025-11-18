@@ -23,6 +23,7 @@ import {
   Loader2,
 } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { toast } from "sonner"
 
 interface AddSourceDialogProps {
   open: boolean
@@ -214,24 +215,7 @@ export function AddSourceDialog({ open, onOpenChange, onAdd }: AddSourceDialogPr
     }
   }, [url])
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!selectedType || !formData.name || !url || !urlValidation?.isValid) return
-
-    onAdd({
-      name: formData.name,
-      type: selectedType,
-      url: url,
-      description: formData.description,
-      isActive: true,
-      lastSync: "Never",
-      itemCount: 0,
-      status: "syncing",
-      tags: [],
-      updateFrequency: formData.updateFrequency,
-    })
-
-    // Reset form
+  const handleReset = () => {
     setUrl("")
     setSelectedType(null)
     setUrlValidation(null)
@@ -242,15 +226,42 @@ export function AddSourceDialog({ open, onOpenChange, onAdd }: AddSourceDialogPr
     })
   }
 
-  const handleReset = () => {
-    setUrl("")
-    setSelectedType(null)
-    setUrlValidation(null)
-    setFormData({
-      name: "",
-      description: "",
-      updateFrequency: "daily",
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedType || !formData.name || !url || !urlValidation?.isValid) return
+
+    const newSource = {
+      name: formData.name,
+      type: selectedType,
+      url: url,
+      description: formData.description,
+      isActive: true,
+      lastSync: "Never",
+      itemCount: 0,
+      status: "syncing" as const,
+      tags: [],
+      updateFrequency: formData.updateFrequency,
+    }
+
+    // Añadir la fuente
+    onAdd(newSource)
+
+    // Resetear formulario
+    handleReset()
+
+    // Cerrar diálogo
+    onOpenChange(false)
+
+    // Mostrar toast de inicio de sincronización
+    toast.info("Fuente añadida", {
+      description: "Descargando artículos del feed RSS...",
     })
+
+    // Sincronizar automáticamente (necesitamos el ID real de la fuente creada)
+    // Por ahora, recargamos la página para ver las fuentes actualizadas
+    setTimeout(() => {
+      window.location.reload()
+    }, 1000)
   }
 
   return (
@@ -342,9 +353,9 @@ export function AddSourceDialog({ open, onOpenChange, onAdd }: AddSourceDialogPr
           )}
 
           {selectedType && urlValidation?.isValid && (
-            <div className="space-y-4 pt-4 border-t border-glass-border">
+            <div className="space-y-2 pt-4 border-t border-glass-border">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
+                <div className="space-y-2">
                   <Label htmlFor="name">Source Name *</Label>
                   <Input
                     id="name"
@@ -356,26 +367,26 @@ export function AddSourceDialog({ open, onOpenChange, onAdd }: AddSourceDialogPr
                   />
                 </div>
 
-                <div>
+                <div className="space-y-2">
                   <Label htmlFor="frequency">Update Frequency</Label>
                   <Select 
                     value={formData.updateFrequency} 
                     onValueChange={(value) => setFormData({ ...formData, updateFrequency: value as Source["updateFrequency"] })}
-                >
-                  <SelectTrigger className="glass">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="glass-card">
-                    <SelectItem value="realtime">Real-time</SelectItem>
-                    <SelectItem value="hourly">Hourly</SelectItem>
-                    <SelectItem value="daily">Daily</SelectItem>
-                    <SelectItem value="weekly">Weekly</SelectItem>
-                  </SelectContent>
-                </Select>
+                  >
+                    <SelectTrigger className="glass">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="glass-card">
+                      <SelectItem value="realtime">Real-time</SelectItem>
+                      <SelectItem value="hourly">Hourly</SelectItem>
+                      <SelectItem value="daily">Daily</SelectItem>
+                      <SelectItem value="weekly">Weekly</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
-              <div>
+              <div className="space-y-2">
                 <Label htmlFor="description">Description (Optional)</Label>
                 <Input
                   id="description"
@@ -389,7 +400,14 @@ export function AddSourceDialog({ open, onOpenChange, onAdd }: AddSourceDialogPr
           )}
 
           <div className="flex justify-end gap-2 pt-4 border-t border-glass-border">
-            
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleReset}
+              className="glass"
+            >
+              Reset
+            </Button>
             <Button
               type="submit"
               className="glass"

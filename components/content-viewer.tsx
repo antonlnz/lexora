@@ -20,6 +20,7 @@ import {
   Clock,
   Eye,
   Maximize2,
+  Download,
 } from "lucide-react"
 import Image from "next/image"
 
@@ -111,10 +112,34 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
   const [maxWidth, setMaxWidth] = useState(800)
 
   const [shouldAnimateFromCard, setShouldAnimateFromCard] = useState(false)
+  const [dragX, setDragX] = useState(0)
+  const [isDragging, setIsDragging] = useState(false)
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen) {
+        onClose()
+      }
+    }
+
+    if (isOpen) {
+      document.addEventListener('keydown', handleKeyDown)
+    }
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isOpen, onClose])
 
   useEffect(() => {
     if (isOpen && cardPosition) {
       setShouldAnimateFromCard(true)
+      setDragX(0) // Reset drag position when opening
+      setIsDragging(false)
+    } else if (!isOpen) {
+      // Reset states when closing
+      setDragX(0)
+      setIsDragging(false)
     }
   }, [isOpen, cardPosition])
 
@@ -156,6 +181,46 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
   const handleSave = () => {
     setIsSaved(!isSaved)
   }
+  
+  const handleDownload = async () => {
+    try {
+      const contentHtml = mockContentData[content.id] || `<p>${content.excerpt}</p>`
+      
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="UTF-8">
+            <title>${content.title}</title>
+            <style>
+              body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; }
+              h1 { font-size: 2em; margin-bottom: 20px; }
+              .meta { color: #666; margin-bottom: 30px; }
+            </style>
+          </head>
+          <body>
+            <h1>${content.title}</h1>
+            <div class="meta">
+              <p>By ${content.author} | ${content.source} | ${content.publishedAt}</p>
+            </div>
+            <div>${contentHtml}</div>
+          </body>
+        </html>
+      `
+
+      const blob = new Blob([htmlContent], { type: 'text/html' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${content.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.html`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Error downloading:', err)
+    }
+  }
 
   const handleShare = async () => {
     if (navigator.share && content) {
@@ -189,6 +254,21 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
 
   const isMultimedia = content?.type === "youtube" || content?.type === "tiktok" || content?.type === "instagram"
   const contentHtml = content ? (mockContentData[content.id] || `<p>${content.excerpt}</p>`) : ""
+
+  const handleDragEnd = (_: any, info: { offset: { x: number }; velocity: { x: number } }) => {
+    const swipeThreshold = 100
+    const swipeVelocityThreshold = 500
+
+    if (info.offset.x > swipeThreshold || info.velocity.x > swipeVelocityThreshold) {
+      // El usuario deslizó suficiente hacia la derecha
+      setDragX(0) // Reset before closing
+      onClose()
+    } else {
+      // Volver a la posición original
+      setDragX(0)
+      setIsDragging(false)
+    }
+  }
 
   const backdropVariants = {
     hidden: { opacity: 0 },
@@ -249,12 +329,13 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
             width: cardPosition.width,
             height: cardPosition.height,
             borderRadius: 16,
-            opacity: 0.8,
-            scale: 0.98,
+            opacity: 1,
+            scale: 1,
             transition: {
-              duration: 0.4,
-              ease: [0.32, 0.72, 0, 1] as [number, number, number, number],
-              opacity: { duration: 0.25, delay: 0.05 },
+              duration: 0.45,
+              ease: [0.4, 0, 0.2, 1] as [number, number, number, number],
+              scale: { duration: 0.45, ease: [0.4, 0, 0.2, 1] },
+              opacity: { duration: 0.2, delay: 0.25 },
             },
           }
         : {
@@ -279,6 +360,9 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
             exit="exit"
             className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50"
             onClick={onClose}
+            style={{
+              opacity: isDragging ? Math.max(0.3, 1 - dragX / 300) : 1,
+            }}
           />
 
           {/* Content Viewer */}
@@ -288,16 +372,45 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
             animate="visible"
             exit="exit"
             className="fixed z-50 overflow-hidden"
+            drag="x"
+            dragConstraints={{ left: 0, right: 0 }}
+            dragElastic={{ left: 0, right: 0.2 }}
+            dragDirectionLock
+            onDragStart={() => setIsDragging(true)}
+            onDrag={(_, info) => {
+              // Solo permitir arrastrar hacia la derecha
+              if (info.offset.x > 0) {
+                setDragX(info.offset.x)
+              }
+            }}
+            onDragEnd={handleDragEnd}
             style={{
               backgroundColor: isDarkMode ? "#0a0a0a" : backgroundColor,
               transformOrigin:
                 cardPosition && shouldAnimateFromCard
                   ? `${cardPosition.left + cardPosition.width / 2}px ${cardPosition.top + cardPosition.height / 2}px`
                   : "center center",
+              x: isDragging ? dragX : 0,
             }}
           >
             {/* Ambient background for multimedia content */}
             {isMultimedia && <AmbientBackground imageUrl={content.image} isActive={isPlaying} intensity={0.3} />}
+
+            {/* Swipe indicator - only visible on touch devices */}
+            <motion.div
+              className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-16 bg-gradient-to-r from-primary/40 to-transparent rounded-r-full z-10 md:hidden pointer-events-none"
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ 
+                opacity: isDragging ? 0 : [0, 0.6, 0],
+                x: isDragging ? 0 : [-10, 0, -10]
+              }}
+              transition={{
+                repeat: isDragging ? 0 : Infinity,
+                duration: 2,
+                ease: "easeInOut",
+                delay: 1,
+              }}
+            />
 
             {/* Reading progress bar */}
             <motion.div
@@ -341,6 +454,10 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
 
                     <Button variant="ghost" size="sm" onClick={handleSave} className="hover-lift-subtle">
                       {isSaved ? <BookmarkCheck className="h-4 w-4 text-primary" /> : <Bookmark className="h-4 w-4" />}
+                    </Button>
+
+                    <Button variant="ghost" size="sm" onClick={handleDownload} className="hover-lift-subtle">
+                      <Download className="h-4 w-4" />
                     </Button>
 
                     <Button variant="ghost" size="sm" onClick={handleShare} className="hover-lift-subtle">

@@ -280,13 +280,13 @@ export function ContentFeed() {
 
         <div className="flex items-center gap-2">
           {canAddSource && (
-            <Button variant="outline" size="sm" onClick={() => setIsAddSourceOpen(true)} className="glass">
+            <Button variant="outline" size="sm" onClick={() => setIsAddSourceOpen(true)} className="glass hover-lift-subtle">
               <Plus className="h-4 w-4 mr-2" />
               Add Source
             </Button>
           )}
 
-          <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={isRefreshing} className="glass">
+          <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={isRefreshing} className="glass hover-lift-subtle">
             <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
             Refresh
           </Button>
@@ -296,7 +296,7 @@ export function ContentFeed() {
               variant={viewMode === "grid" ? "default" : "ghost"}
               size="sm"
               onClick={() => setViewMode("grid")}
-              className="h-8 w-8 p-0"
+              className="h-8 w-8 p-0 hover-lift-subtle"
             >
               <LayoutGrid className="h-4 w-4" />
             </Button>
@@ -304,7 +304,7 @@ export function ContentFeed() {
               variant={viewMode === "list" ? "default" : "ghost"}
               size="sm"
               onClick={() => setViewMode("list")}
-              className="h-8 w-8 p-0"
+              className="h-8 w-8 p-0 hover-lift-subtle"
             >
               <List className="h-4 w-4" />
             </Button>
@@ -350,6 +350,7 @@ export function ContentFeed() {
           <div className="text-muted-foreground text-sm">
             You've reached the end of your content feed, no endless scrolling here.
           </div>
+          <img src="🤡" alt="sticker" className="mx-auto mt-4 h-24 w-24 opacity-50" />
         </div>
       )}
 

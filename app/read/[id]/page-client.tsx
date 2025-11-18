@@ -19,6 +19,7 @@ import {
   User,
   Clock,
   Eye,
+  Download,
 } from "lucide-react"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
@@ -181,6 +182,47 @@ export default function ReadPageClient() {
     setIsSaved(!isSaved)
   }
 
+  const handleDownload = async () => {
+    if (!content) return
+
+    try {
+      // Crear un blob con el contenido del artículo
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="UTF-8">
+            <title>${content.title}</title>
+            <style>
+              body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; }
+              h1 { font-size: 2em; margin-bottom: 20px; }
+              .meta { color: #666; margin-bottom: 30px; }
+            </style>
+          </head>
+          <body>
+            <h1>${content.title}</h1>
+            <div class="meta">
+              <p>By ${content.author} | ${content.source} | ${content.publishedAt}</p>
+            </div>
+            <div>${contentHtml}</div>
+          </body>
+        </html>
+      `
+
+      const blob = new Blob([htmlContent], { type: 'text/html' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${content.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.html`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Error downloading:', err)
+    }
+  }
+
   const handleShare = async () => {
     if (navigator.share && content) {
       try {
@@ -209,7 +251,7 @@ export default function ReadPageClient() {
         <div className="text-center">
           <h1 className="text-2xl font-bold mb-2">Content not found</h1>
           <p className="text-muted-foreground mb-4">The content you're looking for doesn't exist.</p>
-          <Button onClick={() => router.push("/")} className="glass">
+          <Button onClick={() => router.push("/")} className="default hover-lift-subtle">
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back to Feed
           </Button>
@@ -251,6 +293,7 @@ export default function ReadPageClient() {
                   <Button variant="ghost" size="sm" onClick={togglePlayback} className="hover-lift-subtle">
                     {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                   </Button>
+                  
                   <Button variant="ghost" size="sm" onClick={toggleMute} className="hover-lift-subtle">
                     {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                   </Button>
@@ -259,6 +302,10 @@ export default function ReadPageClient() {
 
               <Button variant="ghost" size="sm" onClick={handleSave} className="hover-lift-subtle">
                 {isSaved ? <BookmarkCheck className="h-4 w-4 text-primary" /> : <Bookmark className="h-4 w-4" />}
+              </Button>
+
+              <Button variant="ghost" size="sm" onClick={handleDownload} className="hover-lift-subtle">
+                <Download className="h-4 w-4" />
               </Button>
 
               <Button variant="ghost" size="sm" onClick={handleShare} className="hover-lift-subtle">

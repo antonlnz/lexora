@@ -62,7 +62,7 @@ export function ReadingControls({
     <div className="fixed bottom-6 right-6 z-50">
       <Popover open={isOpen} onOpenChange={setIsOpen}>
         <PopoverTrigger asChild>
-          <Button size="lg" className="rounded-full shadow-lg glass-card">
+          <Button size="lg" className="rounded-full shadow-lg default hover-lift-subtle">
             <Settings className="h-5 w-5" />
           </Button>
         </PopoverTrigger>

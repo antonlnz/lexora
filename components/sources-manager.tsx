@@ -37,13 +37,20 @@ import {
   Download,
 } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { RefreshCw } from "lucide-react"
+import { toast } from "sonner"
 
 interface Source {
   id: string
+  userId: string
   name: string
   type: "news" | "youtube" | "twitter" | "instagram" | "tiktok" | "newsletter" | "rss" | "website"
   url: string
+  favicon?: string
   isActive: boolean
+  lastFetchedAt?: string
+  createdAt?: string
+  updatedAt?: string
   lastSync: string
   itemCount: number
   status: "active" | "error" | "syncing"
@@ -55,6 +62,7 @@ interface Source {
 const mockSources: Source[] = [
   {
     id: "1",
+    userId: "0",
     name: "TechCrunch",
     type: "news",
     url: "https://techcrunch.com",
@@ -68,6 +76,7 @@ const mockSources: Source[] = [
   },
   {
     id: "2",
+    userId: "0",
     name: "Vercel",
     type: "youtube",
     url: "https://youtube.com/@vercel",
@@ -81,6 +90,7 @@ const mockSources: Source[] = [
   },
   {
     id: "3",
+    userId: "0",
     name: "@designpsych",
     type: "twitter",
     url: "https://twitter.com/designpsych",
@@ -94,6 +104,7 @@ const mockSources: Source[] = [
   },
   {
     id: "4",
+    userId: "0",
     name: "Design Weekly",
     type: "newsletter",
     url: "design-weekly@example.com",
@@ -107,6 +118,7 @@ const mockSources: Source[] = [
   },
   {
     id: "5",
+    userId: "0",
     name: "@studiominimal",
     type: "instagram",
     url: "https://instagram.com/studiominimal",
@@ -156,6 +168,7 @@ export function SourcesManager() {
   const [isImportOpen, setIsImportOpen] = useState(false)
   const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(false)
   const [showLimitWarning, setShowLimitWarning] = useState(false)
+  const [isSyncing, setIsSyncing] = useState(false)
 
   const handleToggleSource = (sourceId: string) => {
     setSources((prev) =>
@@ -243,15 +256,15 @@ export function SourcesManager() {
 
       <Tabs defaultValue="all" className="w-full">
         <div className="flex items-center justify-between mb-6">
-          <TabsList className="glass-card">
-            <TabsTrigger value="all">All Sources ({sources.length})</TabsTrigger>
-            <TabsTrigger value="active">Active ({activeSources.length})</TabsTrigger>
-            <TabsTrigger value="inactive">Inactive ({inactiveSources.length})</TabsTrigger>
+          <TabsList className="glass-card hover-lift-subtle">
+            <TabsTrigger value="all" className="hover-lift-subtle">All Sources ({sources.length})</TabsTrigger>
+            <TabsTrigger value="active" className="hover-lift-subtle">Active ({activeSources.length})</TabsTrigger>
+            <TabsTrigger value="inactive" className="hover-lift-subtle">Inactive ({inactiveSources.length})</TabsTrigger>
           </TabsList>
 
 
           <div className="flex gap-2">
-            <Button onClick={handleAddSourceClick} className="default">
+            <Button onClick={handleAddSourceClick} className="default hover-lift-subtle">
               <Plus className="h-4 w-4 mr-2" />
               Add Source
             </Button>
