@@ -5,8 +5,8 @@ import { motion, AnimatePresence } from "framer-motion"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { ReadingControls } from "@/components/reading-controls"
 import { AmbientBackground } from "@/components/ambient-background"
+import { DynamicIsland } from "@/components/dynamic-island"
 import {
   X,
   Bookmark,
@@ -18,89 +18,79 @@ import {
   VolumeX,
   User,
   Clock,
-  Eye,
   Maximize2,
   Download,
+  ExternalLink,
 } from "lucide-react"
 import Image from "next/image"
-
-interface ContentItem {
-  id: string
-  type: "news" | "youtube" | "twitter" | "instagram" | "tiktok" | "newsletter"
-  title: string
-  excerpt: string
-  content?: string
-  source: string
-  author: string
-  publishedAt: string
-  readTime?: string
-  duration?: string
-  image: string
-  tags: string[]
-  isRead: boolean
-  isSaved: boolean
-  views?: string
-  engagement?: string
-}
+import type { ArticleWithUserData } from "@/types/database"
+import { useIsMobile } from "@/hooks/use-mobile"
 
 interface ContentViewerProps {
-  content: ContentItem | null
+  content: ArticleWithUserData | null
   isOpen: boolean
   onClose: () => void
   cardPosition?: DOMRect | null
+  onNavigateNext?: () => void
+  onNavigatePrevious?: () => void
+  hasNext?: boolean
+  hasPrevious?: boolean
 }
 
 const typeIcons = {
   news: "📰",
+  rss: "📰",
   youtube: "🎥",
   twitter: "🐦",
   instagram: "📸",
   tiktok: "🎵",
   newsletter: "📧",
+  website: "🌐",
 }
 
 const typeColors = {
   news: "bg-blue-500/10 text-blue-600 border-blue-500/20",
+  rss: "bg-blue-500/10 text-blue-600 border-blue-500/20",
   youtube: "bg-red-500/10 text-red-600 border-red-500/20",
   twitter: "bg-sky-500/10 text-sky-600 border-sky-500/20",
   instagram: "bg-pink-500/10 text-pink-600 border-pink-500/20",
   tiktok: "bg-purple-500/10 text-purple-600 border-purple-500/20",
   newsletter: "bg-green-500/10 text-green-600 border-green-500/20",
+  website: "bg-gray-500/10 text-gray-600 border-gray-500/20",
 }
 
-// Mock content data
-const mockContentData: Record<string, string> = {
-  "1": `
-    <p>The world of technology is rapidly evolving, and sustainability has become a cornerstone of innovation. As we move into 2025, we're witnessing unprecedented developments that promise to reshape our relationship with the environment.</p>
-    
-    <h2>Revolutionary Breakthroughs</h2>
-    <p>From carbon-negative data centers to biodegradable electronics, the tech industry is pioneering solutions that don't just minimize harm—they actively heal our planet. Companies are investing billions in research that could fundamentally change how we produce, consume, and dispose of technology.</p>
-    
-    <p>One of the most exciting developments is the emergence of bio-computing, where living organisms are used to process information. This technology could reduce energy consumption by up to 90% compared to traditional silicon-based processors.</p>
-  `,
-  "2": `
-    <div class="video-container mb-6">
-      <div class="aspect-video bg-muted rounded-lg flex items-center justify-center">
-        <div class="text-center">
-          <Play class="h-16 w-16 mx-auto mb-4 opacity-50" />
-          <p class="text-muted-foreground">Video Player Placeholder</p>
-        </div>
-      </div>
-    </div>
-    
-    <p>In this comprehensive tutorial, we'll explore the latest features of Next.js 15 and how they can revolutionize your web development workflow.</p>
-    
-    <h2>What's New in Next.js 15</h2>
-    <p>Next.js 15 introduces several groundbreaking features that make building modern web applications faster and more efficient than ever before.</p>
-  `,
+// Helper function to normalize article data from database
+function normalizeContent(article: ArticleWithUserData) {
+  return {
+    id: article.id,
+    type: article.source.source_type,
+    title: article.title,
+    excerpt: article.excerpt || '',
+    content: article.content || '',
+    source: article.source.title,
+    author: article.author || 'Unknown',
+    publishedAt: article.published_at ? new Date(article.published_at).toLocaleDateString() : 'Unknown',
+    url: article.url,
+    readTime: article.reading_time ? `${article.reading_time} min read` : undefined,
+    image: article.image_url || '/placeholder.svg',
+    isRead: article.user_article?.is_read || false,
+    isSaved: article.user_article?.is_favorite || false,
+  }
 }
 
-export function ContentViewer({ content, isOpen, onClose, cardPosition }: ContentViewerProps) {
+export function ContentViewer({ content, isOpen, onClose, cardPosition, onNavigateNext, onNavigatePrevious, hasNext = false, hasPrevious = false }: ContentViewerProps) {
   const contentRef = useRef<HTMLDivElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
   const [isSaved, setIsSaved] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
   const [readingProgress, setReadingProgress] = useState(0)
+  const isMobile = useIsMobile()
+  const [isSelectingText, setIsSelectingText] = useState(false)
+  const [isInteractingWithVideo, setIsInteractingWithVideo] = useState(false)
+
+  // Normalize article data from database
+  const normalizedContent = content ? normalizeContent(content) : null
 
   // Reading customization state
   const [fontSize, setFontSize] = useState(16)
@@ -114,11 +104,54 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
   const [shouldAnimateFromCard, setShouldAnimateFromCard] = useState(false)
   const [dragX, setDragX] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
+  const [isScrolling, setIsScrolling] = useState(false)
+  const [scrollTimeout, setScrollTimeout] = useState<NodeJS.Timeout | null>(null)
+
+  // Update theme-color meta tag when background color changes
+  useEffect(() => {
+    if (!isOpen) return // Only update when viewer is open
+    
+    // Remove any existing theme-color meta tags to avoid conflicts
+    const existingMetas = document.querySelectorAll('meta[name="theme-color"]')
+    existingMetas.forEach(meta => meta.remove())
+    
+    // Create new theme-color meta tag
+    const themeColorMeta = document.createElement('meta')
+    themeColorMeta.setAttribute('name', 'theme-color')
+    themeColorMeta.setAttribute('content', backgroundColor)
+    document.head.appendChild(themeColorMeta)
+    
+    // Also update for Safari on macOS/iOS
+    let appleStatusBarMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')
+    if (!appleStatusBarMeta) {
+      appleStatusBarMeta = document.createElement('meta')
+      appleStatusBarMeta.setAttribute('name', 'apple-mobile-web-app-status-bar-style')
+      document.head.appendChild(appleStatusBarMeta)
+    }
+    appleStatusBarMeta.setAttribute('content', 'black-translucent')
+
+    // Cleanup: restore default color when viewer closes
+    return () => {
+      const defaultColor = document.documentElement.classList.contains('dark') ? '#000000' : '#ffffff'
+      const metas = document.querySelectorAll('meta[name="theme-color"]')
+      metas.forEach(meta => meta.remove())
+      const newMeta = document.createElement('meta')
+      newMeta.setAttribute('name', 'theme-color')
+      newMeta.setAttribute('content', defaultColor)
+      document.head.appendChild(newMeta)
+    }
+  }, [backgroundColor, isOpen])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
+      if (!isOpen) return
+      
+      if (e.key === 'Escape') {
         onClose()
+      } else if (e.key === 'ArrowRight' && hasNext && onNavigateNext) {
+        onNavigateNext()
+      } else if (e.key === 'ArrowLeft' && hasPrevious && onNavigatePrevious) {
+        onNavigatePrevious()
       }
     }
 
@@ -129,7 +162,7 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
     return () => {
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [isOpen, onClose])
+  }, [isOpen, onClose, hasNext, hasPrevious, onNavigateNext, onNavigatePrevious])
 
   useEffect(() => {
     if (isOpen && cardPosition) {
@@ -137,17 +170,20 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
       setDragX(0) // Reset drag position when opening
       setIsDragging(false)
     } else if (!isOpen) {
-      // Reset states when closing
+      // Reset animation flag only after exit animation completes
+      setTimeout(() => {
+        setShouldAnimateFromCard(false)
+      }, 500) // Match with exit animation duration
       setDragX(0)
       setIsDragging(false)
     }
   }, [isOpen, cardPosition])
 
   useEffect(() => {
-    if (content) {
-      setIsSaved(content.isSaved)
+    if (normalizedContent) {
+      setIsSaved(normalizedContent.isSaved)
     }
-  }, [content])
+  }, [normalizedContent])
 
   useEffect(() => {
     const handleScroll = () => {
@@ -157,15 +193,35 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
         const scrollHeight = element.scrollHeight - element.clientHeight
         const progress = scrollHeight > 0 ? Math.min((scrollTop / scrollHeight) * 100, 100) : 0
         setReadingProgress(progress)
+
+        // Detectar si está scrolleando
+        setIsScrolling(true)
+        
+        // Limpiar timeout anterior
+        if (scrollTimeout) {
+          clearTimeout(scrollTimeout)
+        }
+        
+        // Establecer nuevo timeout para detectar cuando deja de scrollear
+        const timeout = setTimeout(() => {
+          setIsScrolling(false)
+        }, 1000)
+        
+        setScrollTimeout(timeout)
       }
     }
 
     const element = contentRef.current
     if (element) {
       element.addEventListener("scroll", handleScroll)
-      return () => element.removeEventListener("scroll", handleScroll)
+      return () => {
+        element.removeEventListener("scroll", handleScroll)
+        if (scrollTimeout) {
+          clearTimeout(scrollTimeout)
+        }
+      }
     }
-  }, [isOpen])
+  }, [isOpen, scrollTimeout])
 
   useEffect(() => {
     if (isOpen) {
@@ -178,20 +234,71 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
     }
   }, [isOpen])
 
+  // Detectar selección de texto
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      const selection = window.getSelection()
+      const hasSelection = selection && selection.toString().length > 0
+      setIsSelectingText(!!hasSelection)
+    }
+
+    if (isOpen && isMobile) {
+      document.addEventListener('selectionchange', handleSelectionChange)
+      return () => {
+        document.removeEventListener('selectionchange', handleSelectionChange)
+      }
+    }
+  }, [isOpen, isMobile])
+
+  // Detectar interacción con controles de video
+  useEffect(() => {
+    const videoElement = videoRef.current
+
+    if (!videoElement || !isOpen || !isMobile) return
+
+    const handleVideoInteractionStart = () => {
+      setIsInteractingWithVideo(true)
+    }
+
+    const handleVideoInteractionEnd = () => {
+      // Pequeño delay para asegurar que la interacción terminó
+      setTimeout(() => {
+        setIsInteractingWithVideo(false)
+      }, 300)
+    }
+
+    // Eventos para detectar interacción con controles
+    videoElement.addEventListener('touchstart', handleVideoInteractionStart)
+    videoElement.addEventListener('touchend', handleVideoInteractionEnd)
+    videoElement.addEventListener('seeking', handleVideoInteractionStart)
+    videoElement.addEventListener('seeked', handleVideoInteractionEnd)
+    videoElement.addEventListener('volumechange', handleVideoInteractionStart)
+    
+    return () => {
+      videoElement.removeEventListener('touchstart', handleVideoInteractionStart)
+      videoElement.removeEventListener('touchend', handleVideoInteractionEnd)
+      videoElement.removeEventListener('seeking', handleVideoInteractionStart)
+      videoElement.removeEventListener('seeked', handleVideoInteractionEnd)
+      videoElement.removeEventListener('volumechange', handleVideoInteractionStart)
+    }
+  }, [isOpen, isMobile, normalizedContent?.image])
+
   const handleSave = () => {
     setIsSaved(!isSaved)
   }
   
   const handleDownload = async () => {
+    if (!content || !normalizedContent) return
+    
     try {
-      const contentHtml = mockContentData[content.id] || `<p>${content.excerpt}</p>`
+      const contentHtml = normalizedContent.content || `<p>${normalizedContent.excerpt}</p>`
       
       const htmlContent = `
         <!DOCTYPE html>
         <html>
           <head>
             <meta charset="UTF-8">
-            <title>${content.title}</title>
+            <title>${normalizedContent.title}</title>
             <style>
               body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 20px; }
               h1 { font-size: 2em; margin-bottom: 20px; }
@@ -199,9 +306,9 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
             </style>
           </head>
           <body>
-            <h1>${content.title}</h1>
+            <h1>${normalizedContent.title}</h1>
             <div class="meta">
-              <p>By ${content.author} | ${content.source} | ${content.publishedAt}</p>
+              <p>By ${normalizedContent.author} | ${normalizedContent.source} | ${normalizedContent.publishedAt}</p>
             </div>
             <div>${contentHtml}</div>
           </body>
@@ -212,7 +319,7 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${content.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.html`
+      a.download = `${normalizedContent.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.html`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -223,11 +330,11 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
   }
 
   const handleShare = async () => {
-    if (navigator.share && content) {
+    if (navigator.share && content && normalizedContent) {
       try {
         await navigator.share({
-          title: content.title,
-          text: content.excerpt,
+          title: normalizedContent.title,
+          text: normalizedContent.excerpt,
           url: window.location.href,
         })
       } catch (err) {
@@ -237,8 +344,15 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
   }
 
   const handleOpenInNewTab = () => {
-    if (content) {
-      window.open(`/read/${content.id}`, "_blank")
+    if (normalizedContent) {
+      window.open(`/read/${normalizedContent.id}`, "_blank")
+    }
+  }
+
+  const handleOpenOriginal = () => {
+    if (normalizedContent && normalizedContent.url && normalizedContent.url !== '#') {
+      // Open in new tab - browser history will work normally
+      window.open(normalizedContent.url, "_blank")
     }
   }
 
@@ -252,19 +366,52 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
 
   //if (!content) return null
 
-  const isMultimedia = content?.type === "youtube" || content?.type === "tiktok" || content?.type === "instagram"
-  const contentHtml = content ? (mockContentData[content.id] || `<p>${content.excerpt}</p>`) : ""
+  const isMultimedia = normalizedContent?.type === "youtube" || normalizedContent?.type === "tiktok" || normalizedContent?.type === "instagram"
+  
+  // Use real content from database, fallback to excerpt if no content
+  const contentHtml = content && normalizedContent 
+    ? (normalizedContent.content || `<p>${normalizedContent.excerpt}</p>`) 
+    : ""
 
   const handleDragEnd = (_: any, info: { offset: { x: number }; velocity: { x: number } }) => {
+    // Solo permitir swipe en mobile y cuando no se está seleccionando texto ni interactuando con video
+    if (!isMobile || isSelectingText || isInteractingWithVideo) {
+      setDragX(0)
+      setIsDragging(false)
+      return
+    }
+
     const swipeThreshold = 100
     const swipeVelocityThreshold = 500
 
+    // Deslizar hacia la derecha
     if (info.offset.x > swipeThreshold || info.velocity.x > swipeVelocityThreshold) {
-      // El usuario deslizó suficiente hacia la derecha
-      setDragX(0) // Reset before closing
-      onClose()
-    } else {
-      // Volver a la posición original
+      if (hasPrevious && onNavigatePrevious) {
+        // Navegar al artículo anterior
+        setDragX(0)
+        setIsDragging(false)
+        onNavigatePrevious()
+      } else {
+        // No hay artículo anterior, cerrar el visor
+        setDragX(0)
+        onClose()
+      }
+    }
+    // Deslizar hacia la izquierda
+    else if (info.offset.x < -swipeThreshold || info.velocity.x < -swipeVelocityThreshold) {
+      if (hasNext && onNavigateNext) {
+        // Navegar al siguiente artículo
+        setDragX(0)
+        setIsDragging(false)
+        onNavigateNext()
+      } else {
+        // No hay siguiente artículo, volver a la posición original
+        setDragX(0)
+        setIsDragging(false)
+      }
+    }
+    // Volver a la posición original
+    else {
       setDragX(0)
       setIsDragging(false)
     }
@@ -288,23 +435,27 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
     },
   }
 
+  const getInitialPosition = () => {
+    if (cardPosition) {
+      return {
+        position: "fixed" as const,
+        top: cardPosition.top,
+        left: cardPosition.left,
+        width: cardPosition.width,
+        height: cardPosition.height,
+        borderRadius: 16,
+        opacity: 1,
+        scale: 1,
+      }
+    }
+    return {
+      scale: 0.95,
+      opacity: 0,
+    }
+  }
+
   const viewerVariants = {
-    hidden:
-      cardPosition && shouldAnimateFromCard
-        ? {
-            position: "fixed" as const,
-            top: cardPosition.top,
-            left: cardPosition.left,
-            width: cardPosition.width,
-            height: cardPosition.height,
-            borderRadius: 16,
-            opacity: 1,
-            scale: 1,
-          }
-        : {
-            scale: 0.95,
-            opacity: 0,
-          },
+    hidden: getInitialPosition(),
     visible: {
       position: "fixed" as const,
       top: 0,
@@ -349,8 +500,8 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
   }
 
   return (
-    <AnimatePresence mode="wait" onExitComplete={() => setShouldAnimateFromCard(false)}>
-      {isOpen && content && (
+    <AnimatePresence mode="wait">
+      {isOpen && content && normalizedContent && (
         <>
           {/* Backdrop */}
           <motion.div
@@ -361,7 +512,7 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
             className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50"
             onClick={onClose}
             style={{
-              opacity: isDragging ? Math.max(0.3, 1 - dragX / 300) : 1,
+              opacity: isDragging && isMobile && !isSelectingText && !isInteractingWithVideo ? Math.max(0.3, 1 - dragX / 300) : 1,
             }}
           />
 
@@ -372,135 +523,120 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
             animate="visible"
             exit="exit"
             className="fixed z-50 overflow-hidden"
-            drag="x"
+            drag={isMobile && !isSelectingText && !isInteractingWithVideo ? "x" : false}
             dragConstraints={{ left: 0, right: 0 }}
-            dragElastic={{ left: 0, right: 0.2 }}
+            dragElastic={0.2}
             dragDirectionLock
-            onDragStart={() => setIsDragging(true)}
+            onDragStart={() => {
+              if (isMobile && !isSelectingText && !isInteractingWithVideo) {
+                setIsDragging(true)
+              }
+            }}
             onDrag={(_, info) => {
-              // Solo permitir arrastrar hacia la derecha
-              if (info.offset.x > 0) {
+              if (isMobile && !isSelectingText && !isInteractingWithVideo) {
                 setDragX(info.offset.x)
               }
             }}
             onDragEnd={handleDragEnd}
             style={{
               backgroundColor: isDarkMode ? "#0a0a0a" : backgroundColor,
-              transformOrigin:
-                cardPosition && shouldAnimateFromCard
-                  ? `${cardPosition.left + cardPosition.width / 2}px ${cardPosition.top + cardPosition.height / 2}px`
-                  : "center center",
-              x: isDragging ? dragX : 0,
+              transformOrigin: cardPosition
+                ? `${cardPosition.left + cardPosition.width / 2}px ${cardPosition.top + cardPosition.height / 2}px`
+                : "center center",
+              x: isDragging && isMobile && !isSelectingText && !isInteractingWithVideo ? dragX : 0,
             }}
           >
             {/* Ambient background for multimedia content */}
-            {isMultimedia && <AmbientBackground imageUrl={content.image} isActive={isPlaying} intensity={0.3} />}
+            {isMultimedia && <AmbientBackground imageUrl={normalizedContent.image} isActive={isPlaying} intensity={0.3} />}
 
-            {/* Swipe indicator - only visible on touch devices */}
-            <motion.div
-              className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-16 bg-gradient-to-r from-primary/40 to-transparent rounded-r-full z-10 md:hidden pointer-events-none"
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ 
-                opacity: isDragging ? 0 : [0, 0.6, 0],
-                x: isDragging ? 0 : [-10, 0, -10]
-              }}
-              transition={{
-                repeat: isDragging ? 0 : Infinity,
-                duration: 2,
-                ease: "easeInOut",
-                delay: 1,
-              }}
-            />
-
-            {/* Reading progress bar */}
-            <motion.div
-              className="absolute top-0 left-0 w-full h-1 bg-border/20 z-10"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.3 }}
+            {/* Close Button - Always visible in top left corner */}
+            <motion.button
+              onClick={onClose}
+              className="fixed top-4 left-4 z-30 w-10 h-10 rounded-full bg-white/90 backdrop-blur-sm shadow-lg flex items-center justify-center hover:bg-white transition-colors"
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
+              transition={{ duration: 0.2 }}
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.95 }}
             >
+              <X className="h-5 w-5 text-black" strokeWidth={2.5} />
+            </motion.button>
+
+            {/* Swipe indicators - only visible on touch devices */}
+            {hasPrevious && (
               <motion.div
-                className="h-full bg-primary"
-                style={{ width: `${readingProgress}%` }}
-                transition={{ duration: 0.2 }}
+                className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-16 bg-linear-to-r from-primary/40 to-transparent rounded-r-full z-10 md:hidden pointer-events-none"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ 
+                  opacity: isDragging ? 0 : [0, 0.6, 0],
+                  x: isDragging ? 0 : [-10, 0, -10]
+                }}
+                transition={{
+                  repeat: isDragging ? 0 : Infinity,
+                  duration: 2,
+                  ease: "easeInOut",
+                  delay: 1,
+                }}
               />
-            </motion.div>
-
-            {/* Header */}
-            <motion.header
-              className="absolute top-0 left-0 right-0 z-10 glass-card border-b"
-              initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2, duration: 0.3 }}
-            >
-              <div className="max-w-4xl mx-auto px-4 py-4">
-                <div className="flex items-center justify-between">
-                  <Button variant="ghost" onClick={onClose} size="sm" className="hover-lift-subtle">
-                    <X className="h-4 w-4 mr-2" />
-                    Close
-                  </Button>
-
-                  <div className="flex items-center gap-2">
-                    {isMultimedia && (
-                      <div className="flex items-center gap-2">
-                        <Button variant="ghost" size="sm" onClick={togglePlayback} className="hover-lift-subtle">
-                          {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={toggleMute} className="hover-lift-subtle">
-                          {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-                        </Button>
-                      </div>
-                    )}
-
-                    <Button variant="ghost" size="sm" onClick={handleSave} className="hover-lift-subtle">
-                      {isSaved ? <BookmarkCheck className="h-4 w-4 text-primary" /> : <Bookmark className="h-4 w-4" />}
-                    </Button>
-
-                    <Button variant="ghost" size="sm" onClick={handleDownload} className="hover-lift-subtle">
-                      <Download className="h-4 w-4" />
-                    </Button>
-
-                    <Button variant="ghost" size="sm" onClick={handleShare} className="hover-lift-subtle">
-                      <Share className="h-4 w-4" />
-                    </Button>
-
-                    <Button variant="ghost" size="sm" onClick={handleOpenInNewTab} className="hover-lift-subtle">
-                      <Maximize2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </motion.header>
-
-            {/* Reading Controls */}
-            <motion.div
-              className="absolute top-20 right-4 z-10"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.3, duration: 0.3 }}
-            >
-              <ReadingControls
-                fontSize={fontSize}
-                setFontSize={setFontSize}
-                fontFamily={fontFamily}
-                setFontFamily={setFontFamily}
-                isDarkMode={isDarkMode}
-                setIsDarkMode={setIsDarkMode}
-                backgroundColor={backgroundColor}
-                setBackgroundColor={setBackgroundColor}
-                textColor={textColor}
-                setTextColor={setTextColor}
-                lineHeight={lineHeight}
-                setLineHeight={setLineHeight}
-                maxWidth={maxWidth}
-                setMaxWidth={setMaxWidth}
+            )}
+            {hasNext && (
+              <motion.div
+                className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-16 bg-linear-to-l from-primary/40 to-transparent rounded-l-full z-10 md:hidden pointer-events-none"
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ 
+                  opacity: isDragging ? 0 : [0, 0.6, 0],
+                  x: isDragging ? 0 : [10, 0, 10]
+                }}
+                transition={{
+                  repeat: isDragging ? 0 : Infinity,
+                  duration: 2,
+                  ease: "easeInOut",
+                  delay: 1.5,
+                }}
               />
-            </motion.div>
+            )}
+
+            {/* Dynamic Island */}
+            <AnimatePresence>
+              {isOpen && (
+                <DynamicIsland
+                  onClose={onClose}
+                  isSaved={isSaved}
+                  onSave={handleSave}
+                  onDownload={handleDownload}
+                  onShare={handleShare}
+                  onOpenInNewTab={handleOpenInNewTab}
+                  onOpenOriginal={handleOpenOriginal}
+                  isMultimedia={isMultimedia}
+                  isPlaying={isPlaying}
+                  isMuted={isMuted}
+                  onTogglePlayback={togglePlayback}
+                  onToggleMute={toggleMute}
+                  isScrolling={isScrolling}
+                  scrollProgress={readingProgress}
+                  fontSize={fontSize}
+                  setFontSize={setFontSize}
+                  fontFamily={fontFamily}
+                  setFontFamily={setFontFamily}
+                  isDarkMode={isDarkMode}
+                  setIsDarkMode={setIsDarkMode}
+                  backgroundColor={backgroundColor}
+                  setBackgroundColor={setBackgroundColor}
+                  textColor={textColor}
+                  setTextColor={setTextColor}
+                  lineHeight={lineHeight}
+                  setLineHeight={setLineHeight}
+                  maxWidth={maxWidth}
+                  setMaxWidth={setMaxWidth}
+                />
+              )}
+            </AnimatePresence>
 
             {/* Scrollable Content */}
             <motion.div
               ref={contentRef}
-              className="h-full overflow-y-auto pt-24 pb-8 px-4"
+              className="h-full overflow-y-auto pt-8 pb-32 px-4 select-text"
               style={{
                 color: isDarkMode ? "#ffffff" : textColor,
               }}
@@ -509,7 +645,7 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
               transition={{ delay: 0.25, duration: 0.4 }}
             >
               <article
-                className="mx-auto transition-all duration-300"
+                className="mx-auto transition-all duration-300 select-text"
                 style={{
                   maxWidth: `${maxWidth}px`,
                   fontSize: `${fontSize}px`,
@@ -527,55 +663,55 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition }: Conten
                 {/* Article Header */}
                 <header className="mb-8">
                   <div className="flex items-center gap-2 mb-4">
-                    <Badge variant="outline" className={typeColors[content.type]}>
-                      {typeIcons[content.type]} {content.type}
+                    <Badge variant="outline" className={typeColors[normalizedContent.type as keyof typeof typeColors] || typeColors.website}>
+                      {typeIcons[normalizedContent.type as keyof typeof typeIcons] || typeIcons.website} {normalizedContent.type}
                     </Badge>
-                    <span className="text-sm opacity-70">{content.source}</span>
+                    <span className="text-sm opacity-70">{normalizedContent.source}</span>
                   </div>
 
-                  <h1 className="text-4xl font-bold mb-4 text-balance leading-tight">{content.title}</h1>
+                  <h1 className="text-4xl font-bold mb-4 text-balance leading-tight">{normalizedContent.title}</h1>
 
                   <div className="flex items-center gap-4 text-sm opacity-70 mb-6">
                     <span className="flex items-center gap-1">
                       <User className="h-3 w-3" />
-                      {content.author}
+                      {normalizedContent.author}
                     </span>
                     <span className="flex items-center gap-1">
                       <Clock className="h-3 w-3" />
-                      {content.publishedAt}
+                      {normalizedContent.publishedAt}
                     </span>
-                    {content.readTime && <span>{content.readTime}</span>}
-                    {content.views && (
-                      <span className="flex items-center gap-1">
-                        <Eye className="h-3 w-3" />
-                        {content.views}
-                      </span>
-                    )}
+                    {normalizedContent.readTime && <span>{normalizedContent.readTime}</span>}
                   </div>
 
-                  {/* Featured Image */}
+                  {/* Featured Image or Video */}
                   <div className="relative aspect-video rounded-lg overflow-hidden mb-8">
-                    <Image
-                      src={content.image || "/placeholder.svg"}
-                      alt={content.title}
-                      fill
-                      className="object-cover"
-                      priority
-                    />
-                    {content.duration && (
-                      <div className="absolute bottom-4 right-4 bg-black/80 text-white px-3 py-1 rounded text-sm">
-                        {content.duration}
-                      </div>
+                    {normalizedContent.image && 
+                     (normalizedContent.image.endsWith('.mp4') || 
+                      normalizedContent.image.endsWith('.webm') || 
+                      normalizedContent.image.endsWith('.ogg') ||
+                      normalizedContent.image.includes('video')) ? (
+                      <video
+                        ref={videoRef}
+                        src={normalizedContent.image}
+                        controls
+                        autoPlay
+                        muted
+                        loop
+                        playsInline
+                        className="w-full h-full object-cover"
+                        preload="metadata"
+                      >
+                        Tu navegador no soporta la reproducción de videos.
+                      </video>
+                    ) : (
+                      <Image
+                        src={normalizedContent.image || "/placeholder.svg"}
+                        alt={normalizedContent.title}
+                        fill
+                        className="object-cover"
+                        priority
+                      />
                     )}
-                  </div>
-
-                  {/* Tags */}
-                  <div className="flex flex-wrap gap-2 mb-8">
-                    {content.tags.map((tag: string) => (
-                      <Badge key={tag} variant="secondary" className="glass">
-                        {tag}
-                      </Badge>
-                    ))}
                   </div>
                 </header>
 

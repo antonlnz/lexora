@@ -5,21 +5,15 @@ import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { ReadingControls } from "@/components/reading-controls"
+import { DynamicIsland } from "@/components/dynamic-island"
 import { AmbientBackground } from "@/components/ambient-background"
 import {
   ArrowLeft,
-  Bookmark,
-  BookmarkCheck,
-  Share,
-  Play,
-  Pause,
-  Volume2,
-  VolumeX,
+  ChevronLeft,
+  ChevronRight,
   User,
   Clock,
   Eye,
-  Download,
 } from "lucide-react"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
@@ -141,6 +135,14 @@ export default function ReadPageClient() {
   const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
   const [readingProgress, setReadingProgress] = useState(0)
+  const [isScrolling, setIsScrolling] = useState(false)
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Get all available articles for navigation
+  const allArticleIds = Object.keys(mockContent)
+  const currentArticleIndex = allArticleIds.indexOf(params.id as string)
+  const hasNext = currentArticleIndex !== -1 && currentArticleIndex < allArticleIds.length - 1
+  const hasPrevious = currentArticleIndex > 0
 
   // Reading customization state
   const [fontSize, setFontSize] = useState(16)
@@ -151,6 +153,38 @@ export default function ReadPageClient() {
   const [lineHeight, setLineHeight] = useState(1.6)
   const [maxWidth, setMaxWidth] = useState(800)
 
+  // Update theme-color meta tag when background color changes
+  useEffect(() => {
+    // Remove any existing theme-color meta tags to avoid conflicts
+    const existingMetas = document.querySelectorAll('meta[name="theme-color"]')
+    existingMetas.forEach(meta => meta.remove())
+    
+    // Create new theme-color meta tag
+    const themeColorMeta = document.createElement('meta')
+    themeColorMeta.setAttribute('name', 'theme-color')
+    themeColorMeta.setAttribute('content', backgroundColor)
+    document.head.appendChild(themeColorMeta)
+    
+    // Also update for Safari on macOS/iOS
+    let appleStatusBarMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')
+    if (!appleStatusBarMeta) {
+      appleStatusBarMeta = document.createElement('meta')
+      appleStatusBarMeta.setAttribute('name', 'apple-mobile-web-app-status-bar-style')
+      document.head.appendChild(appleStatusBarMeta)
+    }
+    appleStatusBarMeta.setAttribute('content', 'black-translucent')
+
+    // Cleanup: restore default color when component unmounts
+    return () => {
+      const defaultColor = document.documentElement.classList.contains('dark') ? '#000000' : '#ffffff'
+      existingMetas.forEach(meta => meta.remove())
+      const newMeta = document.createElement('meta')
+      newMeta.setAttribute('name', 'theme-color')
+      newMeta.setAttribute('content', defaultColor)
+      document.head.appendChild(newMeta)
+    }
+  }, [backgroundColor])
+
   useEffect(() => {
     const id = params.id as string
     const foundContent = mockContent[id]
@@ -160,6 +194,77 @@ export default function ReadPageClient() {
     }
   }, [params.id])
 
+  const handleNavigateNext = () => {
+    if (hasNext) {
+      const nextId = allArticleIds[currentArticleIndex + 1]
+      router.push(`/read/${nextId}`)
+    }
+  }
+
+  const handleNavigatePrevious = () => {
+    if (hasPrevious) {
+      const previousId = allArticleIds[currentArticleIndex - 1]
+      router.push(`/read/${previousId}`)
+    }
+  }
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight' && hasNext) {
+        handleNavigateNext()
+      } else if (e.key === 'ArrowLeft' && hasPrevious) {
+        handleNavigatePrevious()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [hasNext, hasPrevious, currentArticleIndex])
+
+  // Touch swipe navigation
+  useEffect(() => {
+    let touchStartX = 0
+    let touchEndX = 0
+
+    const handleTouchStart = (e: TouchEvent) => {
+      touchStartX = e.touches[0].clientX
+    }
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      touchEndX = e.changedTouches[0].clientX
+      handleSwipe()
+    }
+
+    const handleSwipe = () => {
+      const swipeThreshold = 100
+      const diff = touchStartX - touchEndX
+
+      if (Math.abs(diff) > swipeThreshold) {
+        if (diff > 0 && hasNext) {
+          // Swipe left - next article
+          handleNavigateNext()
+        } else if (diff < 0 && hasPrevious) {
+          // Swipe right - previous article
+          handleNavigatePrevious()
+        }
+      }
+    }
+
+    const contentElement = contentRef.current
+    if (contentElement) {
+      contentElement.addEventListener('touchstart', handleTouchStart, { passive: true })
+      contentElement.addEventListener('touchend', handleTouchEnd, { passive: true })
+
+      return () => {
+        contentElement.removeEventListener('touchstart', handleTouchStart)
+        contentElement.removeEventListener('touchend', handleTouchEnd)
+      }
+    }
+  }, [hasNext, hasPrevious, currentArticleIndex])
+
   useEffect(() => {
     const handleScroll = () => {
       if (contentRef.current) {
@@ -168,13 +273,27 @@ export default function ReadPageClient() {
         const scrollHeight = element.scrollHeight - element.clientHeight
         const progress = scrollHeight > 0 ? Math.min((scrollTop / scrollHeight) * 100, 100) : 0
         setReadingProgress(progress)
+        
+        // Detectar si está scrolling
+        setIsScrolling(true)
+        if (scrollTimeoutRef.current) {
+          clearTimeout(scrollTimeoutRef.current)
+        }
+        scrollTimeoutRef.current = setTimeout(() => {
+          setIsScrolling(false)
+        }, 150)
       }
     }
 
     const element = contentRef.current
     if (element) {
       element.addEventListener("scroll", handleScroll)
-      return () => element.removeEventListener("scroll", handleScroll)
+      return () => {
+        element.removeEventListener("scroll", handleScroll)
+        if (scrollTimeoutRef.current) {
+          clearTimeout(scrollTimeoutRef.current)
+        }
+      }
     }
   }, [])
 
@@ -237,6 +356,14 @@ export default function ReadPageClient() {
     }
   }
 
+  const handleOpenInNewTab = () => {
+    window.open(window.location.href, '_blank')
+  }
+
+  const handleClose = () => {
+    router.back()
+  }
+
   const togglePlayback = () => {
     setIsPlaying(!isPlaying)
   }
@@ -273,51 +400,67 @@ export default function ReadPageClient() {
       {/* Ambient background for multimedia content */}
       {isMultimedia && <AmbientBackground imageUrl={content.image} isActive={isPlaying} intensity={0.3} />}
 
+      {/* Swipe indicators - only visible on touch devices */}
+      {hasPrevious && (
+        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-16 bg-linear-to-r from-primary/40 to-transparent rounded-r-full z-10 md:hidden pointer-events-none" />
+      )}
+      {hasNext && (
+        <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-16 bg-linear-to-l from-primary/40 to-transparent rounded-l-full z-10 md:hidden pointer-events-none" />
+      )}
+
       {/* Reading progress bar */}
       <div className="fixed top-0 left-0 w-full h-1 bg-border/20 z-10">
         <div className="h-full bg-primary transition-all duration-200" style={{ width: `${readingProgress}%` }} />
       </div>
 
-      {/* Header */}
+      {/* Header - Navigation buttons */}
       <header className="sticky top-0 z-10 glass-card border-b">
-        <div className="max-w-4xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <Button variant="ghost" onClick={() => router.back()} size="sm" className="hover-lift-subtle">
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Back
+        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
+          <Button variant="ghost" onClick={() => router.back()} size="sm" className="hover-lift-subtle">
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back
+          </Button>
+          
+          <div className="hidden md:flex items-center gap-2">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={handleNavigatePrevious} 
+              disabled={!hasPrevious}
+              className="hover-lift-subtle"
+            >
+              <ChevronLeft className="h-4 w-4 mr-1" />
+              Previous
             </Button>
-
-            <div className="flex items-center gap-2">
-              {isMultimedia && (
-                <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm" onClick={togglePlayback} className="hover-lift-subtle">
-                    {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                  </Button>
-                  
-                  <Button variant="ghost" size="sm" onClick={toggleMute} className="hover-lift-subtle">
-                    {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-                  </Button>
-                </div>
-              )}
-
-              <Button variant="ghost" size="sm" onClick={handleSave} className="hover-lift-subtle">
-                {isSaved ? <BookmarkCheck className="h-4 w-4 text-primary" /> : <Bookmark className="h-4 w-4" />}
-              </Button>
-
-              <Button variant="ghost" size="sm" onClick={handleDownload} className="hover-lift-subtle">
-                <Download className="h-4 w-4" />
-              </Button>
-
-              <Button variant="ghost" size="sm" onClick={handleShare} className="hover-lift-subtle">
-                <Share className="h-4 w-4" />
-              </Button>
-            </div>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={handleNavigateNext} 
+              disabled={!hasNext}
+              className="hover-lift-subtle"
+            >
+              Next
+              <ChevronRight className="h-4 w-4 ml-1" />
+            </Button>
           </div>
         </div>
       </header>
 
-      {/* Reading Controls */}
-      <ReadingControls
+      {/* Dynamic Island with all controls */}
+      <DynamicIsland
+        onClose={handleClose}
+        isSaved={isSaved}
+        onSave={handleSave}
+        onDownload={handleDownload}
+        onShare={handleShare}
+        onOpenInNewTab={handleOpenInNewTab}
+        isMultimedia={isMultimedia}
+        isPlaying={isPlaying}
+        isMuted={isMuted}
+        onTogglePlayback={togglePlayback}
+        onToggleMute={toggleMute}
+        isScrolling={isScrolling}
+        scrollProgress={readingProgress}
         fontSize={fontSize}
         setFontSize={setFontSize}
         fontFamily={fontFamily}

@@ -12,7 +12,7 @@ import { Sparkles, TrendingUp, Star, Users } from "lucide-react"
 interface SuggestionsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onAdd: (sources: Omit<Source, "id">[]) => void
+  onAdd: () => void | Promise<void>
 }
 
 interface Source {
@@ -102,25 +102,11 @@ export function SuggestionsDialog({ open, onOpenChange, onAdd }: SuggestionsDial
   }
 
   const handleAdd = () => {
-    const sourcesToAdd: Omit<Source, "id">[] = []
-
-    Object.values(suggestedSources)
-      .flat()
-      .forEach((source) => {
-        if (selectedSources.has(source.url)) {
-          sourcesToAdd.push({
-            ...source,
-            isActive: true,
-            lastSync: "Never",
-            itemCount: 0,
-            status: "syncing",
-            updateFrequency: "daily",
-          })
-        }
-      })
-
-    onAdd(sourcesToAdd)
+    // TODO: Aquí deberíamos procesar y guardar las fuentes seleccionadas en Supabase
+    // Por ahora solo refrescamos la lista
+    onAdd()
     setSelectedSources(new Set())
+    onOpenChange(false)
   }
 
   return (

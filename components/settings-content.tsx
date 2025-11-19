@@ -21,15 +21,15 @@ export function SettingsContent() {
   const [theme, setTheme] = useState("system")
   const [fontSize, setFontSize] = useState([16])
   const [notifications, setNotifications] = useState({
-    email: true,
-    push: true,
-    newContent: true,
+    email: false,
+    push: false,
+    newContent: false,
     trending: false,
-    weekly: true,
+    weekly: false,
   })
   const [privacy, setPrivacy] = useState({
-    analytics: true,
-    personalized: true,
+    analytics: false,
+    personalized: false,
     shareData: false,
   })
   const [showCancelDialog, setShowCancelDialog] = useState(false)
@@ -353,7 +353,7 @@ export function SettingsContent() {
 
             <div className="space-y-3">
               <Label htmlFor="data-retention">Data Retention</Label>
-              <Select defaultValue="1year">
+              <Select defaultValue="3months">
                 <SelectTrigger id="data-retention" className="glass hover-lift-subtle">
                   <SelectValue placeholder="Select retention period" />
                 </SelectTrigger>

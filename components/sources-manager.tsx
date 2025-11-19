@@ -35,157 +35,127 @@ import {
   Sparkles,
   Upload,
   Download,
+  Loader2,
 } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { RefreshCw } from "lucide-react"
 import { toast } from "sonner"
+import { sourceService } from "@/lib/services/source-service"
+import type { Source as DBSource } from "@/types/database"
 
 interface Source {
   id: string
-  userId: string
-  name: string
-  type: "news" | "youtube" | "twitter" | "instagram" | "tiktok" | "newsletter" | "rss" | "website"
+  title: string
   url: string
-  favicon?: string
-  isActive: boolean
-  lastFetchedAt?: string
-  createdAt?: string
-  updatedAt?: string
-  lastSync: string
-  itemCount: number
-  status: "active" | "error" | "syncing"
-  description?: string
-  tags: string[]
-  updateFrequency: "realtime" | "hourly" | "daily" | "weekly"
+  description: string | null
+  source_type: 'rss' | 'youtube' | 'twitter' | 'instagram' | 'tiktok' | 'newsletter' | 'website'
+  favicon_url: string | null
+  is_active: boolean
+  last_fetched_at: string | null
+  created_at: string
+  updated_at: string
 }
 
-const mockSources: Source[] = [
-  {
-    id: "1",
-    userId: "0",
-    name: "TechCrunch",
-    type: "news",
-    url: "https://techcrunch.com",
-    isActive: true,
-    lastSync: "2 minutes ago",
-    itemCount: 24,
-    status: "active",
-    description: "Latest technology news and startup coverage",
-    tags: ["Technology", "Startups", "Innovation"],
-    updateFrequency: "hourly",
-  },
-  {
-    id: "2",
-    userId: "0",
-    name: "Vercel",
-    type: "youtube",
-    url: "https://youtube.com/@vercel",
-    isActive: true,
-    lastSync: "1 hour ago",
-    itemCount: 12,
-    status: "active",
-    description: "Web development tutorials and product updates",
-    tags: ["Web Development", "Next.js", "Tutorials"],
-    updateFrequency: "daily",
-  },
-  {
-    id: "3",
-    userId: "0",
-    name: "@designpsych",
-    type: "twitter",
-    url: "https://twitter.com/designpsych",
-    isActive: true,
-    lastSync: "5 minutes ago",
-    itemCount: 48,
-    status: "active",
-    description: "Psychology insights for product design",
-    tags: ["Design", "Psychology", "UX"],
-    updateFrequency: "realtime",
-  },
-  {
-    id: "4",
-    userId: "0",
-    name: "Design Weekly",
-    type: "newsletter",
-    url: "design-weekly@example.com",
-    isActive: false,
-    lastSync: "3 days ago",
-    itemCount: 6,
-    status: "error",
-    description: "Weekly design inspiration and resources",
-    tags: ["Design", "Inspiration", "Weekly"],
-    updateFrequency: "weekly",
-  },
-  {
-    id: "5",
-    userId: "0",
-    name: "@studiominimal",
-    type: "instagram",
-    url: "https://instagram.com/studiominimal",
-    isActive: true,
-    lastSync: "30 minutes ago",
-    itemCount: 8,
-    status: "active",
-    description: "Minimalist design and photography",
-    tags: ["Photography", "Minimalism", "Design"],
-    updateFrequency: "daily",
-  },
-]
-
-const sourceIcons = {
-  news: Newspaper,
+const sourceTypeIcons: Record<string, any> = {
+  rss: Rss,
   youtube: Youtube,
   twitter: Twitter,
   instagram: Instagram,
   tiktok: Music2,
   newsletter: Mail,
-  rss: Rss,
   website: Globe,
 }
 
-const sourceColors = {
-  news: "bg-blue-500/10 text-blue-600 border-blue-500/20",
+const sourceTypeLabels: Record<string, string> = {
+  rss: "RSS Feed",
+  youtube: "YouTube",
+  twitter: "Twitter",
+  instagram: "Instagram",
+  tiktok: "TikTok",
+  newsletter: "Newsletter",
+  website: "Website",
+}
+
+const sourceTypeColors: Record<string, string> = {
+  rss: "bg-orange-500/10 text-orange-600 border-orange-500/20",
   youtube: "bg-red-500/10 text-red-600 border-red-500/20",
   twitter: "bg-sky-500/10 text-sky-600 border-sky-500/20",
   instagram: "bg-pink-500/10 text-pink-600 border-pink-500/20",
   tiktok: "bg-purple-500/10 text-purple-600 border-purple-500/20",
   newsletter: "bg-green-500/10 text-green-600 border-green-500/20",
-  rss: "bg-orange-500/10 text-orange-600 border-orange-500/20",
   website: "bg-gray-500/10 text-gray-600 border-gray-500/20",
-}
-
-const statusColors = {
-  active: "text-green-600",
-  error: "text-red-600",
-  syncing: "text-yellow-600",
 }
 
 export function SourcesManager() {
   const { canAddSource, getSourceLimit, currentPlan } = useSubscription()
-  const [sources, setSources] = useState<Source[]>(mockSources)
+  const [sources, setSources] = useState<Source[]>([])
   const [selectedSource, setSelectedSource] = useState<Source | null>(null)
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
   const [isImportOpen, setIsImportOpen] = useState(false)
   const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(false)
   const [showLimitWarning, setShowLimitWarning] = useState(false)
-  const [isSyncing, setIsSyncing] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
 
-  const handleToggleSource = (sourceId: string) => {
-    setSources((prev) =>
-      prev.map((source) => (source.id === sourceId ? { ...source, isActive: !source.isActive } : source)),
-    )
-  }
+  // Cargar fuentes al montar el componente
+  useEffect(() => {
+    loadSources()
+  }, [])
 
-  const handleDeleteSource = (sourceId: string) => {
-    setSources((prev) => prev.filter((source) => source.id !== sourceId))
-    if (selectedSource?.id === sourceId) {
-      setSelectedSource(null)
+  const loadSources = async () => {
+    setIsLoading(true)
+    try {
+      const data = await sourceService.getUserSources()
+      setSources(data)
+    } catch (error) {
+      console.error("Error loading sources:", error)
+      toast.error("Error al cargar fuentes")
+    } finally {
+      setIsLoading(false)
     }
   }
 
-  const handleUpdateSource = (updatedSource: Source) => {
-    setSources((prev) => prev.map((source) => (source.id === updatedSource.id ? updatedSource : source)))
-    setSelectedSource(updatedSource)
+  const handleToggleSource = async (sourceId: string) => {
+    const source = sources.find(s => s.id === sourceId)
+    if (!source) return
+
+    try {
+      await sourceService.toggleSourceActive(sourceId, !source.is_active)
+      setSources((prev) =>
+        prev.map((source) => (source.id === sourceId ? { ...source, is_active: !source.is_active } : source)),
+      )
+      toast.success(source.is_active ? "Fuente desactivada" : "Fuente activada")
+    } catch (error) {
+      toast.error("Error al actualizar fuente")
+    }
+  }
+
+  const handleDeleteSource = async (sourceId: string) => {
+    try {
+      await sourceService.deleteSource(sourceId)
+      setSources((prev) => prev.filter((source) => source.id !== sourceId))
+      if (selectedSource?.id === sourceId) {
+        setSelectedSource(null)
+      }
+      toast.success("Fuente eliminada")
+    } catch (error) {
+      toast.error("Error al eliminar fuente")
+    }
+  }
+
+  const handleUpdateSource = async (updatedSource: Source) => {
+    try {
+      await sourceService.updateSource(updatedSource.id, {
+        title: updatedSource.title,
+        url: updatedSource.url,
+        description: updatedSource.description,
+        source_type: updatedSource.source_type,
+      })
+      setSources((prev) => prev.map((source) => (source.id === updatedSource.id ? updatedSource : source)))
+      setSelectedSource(updatedSource)
+      toast.success("Fuente actualizada")
+    } catch (error) {
+      toast.error("Error al actualizar fuente")
+    }
   }
 
   const handleAddSourceClick = () => {
@@ -196,10 +166,21 @@ export function SourcesManager() {
     setIsAddDialogOpen(true)
   }
 
-  const activeSources = sources.filter((source) => source.isActive)
-  const inactiveSources = sources.filter((source) => !source.isActive)
+  const activeSources = sources.filter((source) => source.is_active)
+  const inactiveSources = sources.filter((source) => !source.is_active)
   const sourceLimit = getSourceLimit()
   const isNearLimit = sources.length >= sourceLimit * 0.8
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-primary" />
+          <p className="text-muted-foreground">Loading sources...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -344,28 +325,19 @@ export function SourcesManager() {
       <AddSourceDialog
         open={isAddDialogOpen}
         onOpenChange={setIsAddDialogOpen}
-        onAdd={(newSource) => {
-          setSources((prev) => [...prev, { ...newSource, id: Date.now().toString() }])
-          setIsAddDialogOpen(false)
-        }}
+        onSourceAdded={loadSources}
       />
 
       <ImportOPMLDialog
         open={isImportOpen}
         onOpenChange={setIsImportOpen}
-        onImport={(importedSources) => {
-          setSources((prev) => [...prev, ...importedSources.map((s, i) => ({ ...s, id: (Date.now() + i).toString() }))])
-          setIsImportOpen(false)
-        }}
+        onImport={loadSources}
       />
 
       <SuggestionsDialog
         open={isSuggestionsOpen}
         onOpenChange={setIsSuggestionsOpen}
-        onAdd={(newSources) => {
-          setSources((prev) => [...prev, ...newSources.map((s, i) => ({ ...s, id: (Date.now() + i).toString() }))])
-          setIsSuggestionsOpen(false)
-        }}
+        onAdd={loadSources}
       />
     </div>
   )
@@ -394,7 +366,9 @@ function SourcesList({ sources, onToggle, onDelete, onSelect, selectedId }: Sour
   return (
     <div className="space-y-4">
       {sources.map((source) => {
-        const IconComponent = sourceIcons[source.type]
+        const IconComponent = sourceTypeIcons[source.source_type] || Globe
+        const typeColorClass = sourceTypeColors[source.source_type] || sourceTypeColors.website
+        
         return (
           <Card
             key={source.id}
@@ -405,46 +379,53 @@ function SourcesList({ sources, onToggle, onDelete, onSelect, selectedId }: Sour
           >
             <div className="flex items-start justify-between">
               <div className="flex items-start gap-4 flex-1">
-                <div className={`p-2 rounded-lg ${sourceColors[source.type]}`}>
-                  <IconComponent className="h-5 w-5" />
-                </div>
+                {source.favicon_url ? (
+                  <div className="p-2 rounded-lg bg-muted">
+                    <img src={source.favicon_url} alt="" className="h-5 w-5" />
+                  </div>
+                ) : (
+                  <div className={`p-2 rounded-lg ${typeColorClass}`}>
+                    <IconComponent className="h-5 w-5" />
+                  </div>
+                )}
 
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="font-semibold text-lg">{source.name}</h3>
-                    <Badge variant="outline" className={sourceColors[source.type]}>
-                      {source.type}
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <h3 className="font-semibold text-lg">{source.title}</h3>
+                    <Badge variant="outline" className={typeColorClass}>
+                      {sourceTypeLabels[source.source_type]}
                     </Badge>
-                    {source.status === "active" && <CheckCircle className="h-4 w-4 text-green-600" />}
-                    {source.status === "error" && <AlertCircle className="h-4 w-4 text-red-600" />}
+                    {source.is_active && <CheckCircle className="h-4 w-4 text-green-600" />}
                   </div>
 
                   {source.description && <p className="text-muted-foreground text-sm mb-2">{source.description}</p>}
 
-                  <div className="flex items-center gap-4 text-sm text-muted-foreground mb-2">
-                    <span>{source.itemCount} items</span>
-                    <span>•</span>
-                    <span>Last sync: {source.lastSync}</span>
-                    <span>•</span>
-                    <span>Updates {source.updateFrequency}</span>
-                  </div>
-
-                  <div className="flex flex-wrap gap-1">
-                    {source.tags.map((tag) => (
-                      <Badge key={tag} variant="secondary" className="text-xs glass">
-                        {tag}
-                      </Badge>
-                    ))}
+                  <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                    <span className="truncate max-w-xs">{source.url}</span>
+                    {source.last_fetched_at && (
+                      <>
+                        <span>•</span>
+                        <span>Last sync: {new Date(source.last_fetched_at).toLocaleDateString()}</span>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
 
               <div className="flex items-center gap-2 ml-4">
-                <Switch checked={source.isActive} onCheckedChange={() => onToggle(source.id)} />
+                <Switch checked={source.is_active} onCheckedChange={() => onToggle(source.id)} />
                 <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
                   <Settings className="h-4 w-4" />
                 </Button>
-                <Button variant="ghost" size="sm" onClick={() => onDelete(source.id)} className="h-8 w-8 p-0">
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDelete(source.id)
+                  }} 
+                  className="h-8 w-8 p-0"
+                >
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
@@ -472,6 +453,8 @@ function SourceSettings({ source, onUpdate }: SourceSettingsProps) {
     onUpdate(localSource)
   }
 
+  const SelectedTypeIcon = sourceTypeIcons[localSource.source_type] || Globe
+
   return (
     <Card className="glass-card p-6 sticky top-24">
       <h3 className="text-lg font-semibold mb-4">Source Settings</h3>
@@ -481,8 +464,8 @@ function SourceSettings({ source, onUpdate }: SourceSettingsProps) {
           <Label htmlFor="name">Name</Label>
           <Input
             id="name"
-            value={localSource.name}
-            onChange={(e) => setLocalSource({ ...localSource, name: e.target.value })}
+            value={localSource.title}
+            onChange={(e) => setLocalSource({ ...localSource, title: e.target.value })}
             className="glass"
           />
         </div>
@@ -508,19 +491,62 @@ function SourceSettings({ source, onUpdate }: SourceSettingsProps) {
         </div>
 
         <div>
-          <Label htmlFor="frequency" className="mb-2 block">Update Frequency</Label>
+          <Label htmlFor="source_type" className="mb-2 block">Source Type</Label>
           <Select 
-            value={localSource.updateFrequency} 
-            onValueChange={(value) => setLocalSource({ ...localSource, updateFrequency: value as Source["updateFrequency"] })}
+            value={localSource.source_type} 
+            onValueChange={(value: any) => setLocalSource({ ...localSource, source_type: value })}
           >
             <SelectTrigger className="glass">
-              <SelectValue />
+              <SelectValue>
+                <div className="flex items-center gap-2">
+                  <SelectedTypeIcon className="h-4 w-4" />
+                  <span>{sourceTypeLabels[localSource.source_type]}</span>
+                </div>
+              </SelectValue>
             </SelectTrigger>
             <SelectContent className="glass-card">
-              <SelectItem value="realtime">Real-time</SelectItem>
-              <SelectItem value="hourly">Hourly</SelectItem>
-              <SelectItem value="daily">Daily</SelectItem>
-              <SelectItem value="weekly">Weekly</SelectItem>
+              <SelectItem value="rss">
+                <div className="flex items-center gap-2">
+                  <Rss className="h-4 w-4" />
+                  <span>RSS Feed</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="youtube">
+                <div className="flex items-center gap-2">
+                  <Youtube className="h-4 w-4" />
+                  <span>YouTube</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="twitter">
+                <div className="flex items-center gap-2">
+                  <Twitter className="h-4 w-4" />
+                  <span>Twitter</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="instagram">
+                <div className="flex items-center gap-2">
+                  <Instagram className="h-4 w-4" />
+                  <span>Instagram</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="tiktok">
+                <div className="flex items-center gap-2">
+                  <Music2 className="h-4 w-4" />
+                  <span>TikTok</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="newsletter">
+                <div className="flex items-center gap-2">
+                  <Mail className="h-4 w-4" />
+                  <span>Newsletter</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="website">
+                <div className="flex items-center gap-2">
+                  <Globe className="h-4 w-4" />
+                  <span>Website</span>
+                </div>
+              </SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -529,8 +555,8 @@ function SourceSettings({ source, onUpdate }: SourceSettingsProps) {
           <Label htmlFor="active">Active</Label>
           <Switch
             id="active"
-            checked={localSource.isActive}
-            onCheckedChange={(checked) => setLocalSource({ ...localSource, isActive: checked })}
+            checked={localSource.is_active}
+            onCheckedChange={(checked) => setLocalSource({ ...localSource, is_active: checked })}
           />
         </div>
 

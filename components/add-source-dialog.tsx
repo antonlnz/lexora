@@ -24,38 +24,34 @@ import {
 } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
+import { sourceService } from "@/lib/services/source-service"
 
 interface AddSourceDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onAdd: (source: Omit<Source, "id">) => void
+  onSourceAdded?: () => void
 }
 
-interface Source {
-  id: string
+type SourceType = "rss" | "youtube" | "twitter" | "instagram" | "tiktok" | "newsletter" | "website"
+
+const sourceTypes: {
+  type: SourceType
   name: string
-  type: "news" | "youtube" | "twitter" | "instagram" | "tiktok" | "newsletter" | "rss" | "website"
-  url: string
-  isActive: boolean
-  lastSync: string
-  itemCount: number
-  status: "active" | "error" | "syncing"
-  description?: string
-  tags: string[]
-  updateFrequency: "realtime" | "hourly" | "daily" | "weekly"
-}
-
-const sourceTypes = [
+  icon: any
+  description: string
+  color: string
+  examples: string[]
+}[] = [
   {
-    type: "news" as const,
-    name: "News Site",
-    icon: Newspaper,
+    type: "rss",
+    name: "RSS Feed",
+    icon: Rss,
     description: "RSS feeds from news websites",
-    color: "bg-blue-500/10 text-blue-600 border-blue-500/20",
+    color: "bg-orange-500/10 text-orange-600 border-orange-500/20",
     examples: ["CNN", "BBC", "TechCrunch", "The Verge"],
   },
   {
-    type: "youtube" as const,
+    type: "youtube",
     name: "YouTube",
     icon: Youtube,
     description: "YouTube channels and playlists",
@@ -63,7 +59,7 @@ const sourceTypes = [
     examples: ["@vercel", "@fireship", "@3blue1brown"],
   },
   {
-    type: "twitter" as const,
+    type: "twitter",
     name: "Twitter",
     icon: Twitter,
     description: "Twitter profiles and lists",
@@ -71,7 +67,7 @@ const sourceTypes = [
     examples: ["@elonmusk", "@vercel", "@tailwindcss"],
   },
   {
-    type: "instagram" as const,
+    type: "instagram",
     name: "Instagram",
     icon: Instagram,
     description: "Instagram profiles",
@@ -79,7 +75,7 @@ const sourceTypes = [
     examples: ["@design", "@minimal", "@photography"],
   },
   {
-    type: "tiktok" as const,
+    type: "tiktok",
     name: "TikTok",
     icon: Music2,
     description: "TikTok profiles",
@@ -87,7 +83,7 @@ const sourceTypes = [
     examples: ["@productivity", "@tech", "@design"],
   },
   {
-    type: "newsletter" as const,
+    type: "newsletter",
     name: "Newsletter",
     icon: Mail,
     description: "Email newsletters",
@@ -95,15 +91,7 @@ const sourceTypes = [
     examples: ["Morning Brew", "The Hustle", "Design Weekly"],
   },
   {
-    type: "rss" as const,
-    name: "RSS Feed",
-    icon: Rss,
-    description: "Custom RSS feeds",
-    color: "bg-orange-500/10 text-orange-600 border-orange-500/20",
-    examples: ["Blog feeds", "Podcast feeds", "Custom feeds"],
-  },
-  {
-    type: "website" as const,
+    type: "website",
     name: "Website",
     icon: Globe,
     description: "Any website or blog",
@@ -124,12 +112,12 @@ const urlPatterns = {
   rss: [/\.rss$/, /\.xml$/, /\/feed\/?$/, /\/rss\/?$/],
 }
 
-function detectSourceType(url: string): Source["type"] | null {
+function detectSourceType(url: string): SourceType | null {
   const lowerUrl = url.toLowerCase()
 
   for (const [type, patterns] of Object.entries(urlPatterns)) {
     if (patterns.some((pattern) => pattern.test(lowerUrl))) {
-      return type as Source["type"]
+      return type as SourceType
     }
   }
 
@@ -154,7 +142,7 @@ function validateUrl(url: string): { isValid: boolean; message: string } {
   }
 }
 
-function extractSourceName(url: string, type: Source["type"]): string {
+function extractSourceName(url: string, type: SourceType): string {
   try {
     const urlObj = new URL(url)
 
@@ -177,15 +165,27 @@ function extractSourceName(url: string, type: Source["type"]): string {
   }
 }
 
-export function AddSourceDialog({ open, onOpenChange, onAdd }: AddSourceDialogProps) {
+async function fetchFaviconUrl(url: string): Promise<string | null> {
+  try {
+    const urlObj = new URL(url)
+    const domain = urlObj.origin
+    
+    // Intentar con Google Favicon Service
+    return `https://www.google.com/s2/favicons?domain=${domain}&sz=128`
+  } catch {
+    return null
+  }
+}
+
+export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSourceDialogProps) {
   const [url, setUrl] = useState("")
-  const [selectedType, setSelectedType] = useState<Source["type"] | null>(null)
+  const [selectedType, setSelectedType] = useState<SourceType | null>(null)
   const [isDetecting, setIsDetecting] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [urlValidation, setUrlValidation] = useState<{ isValid: boolean; message: string } | null>(null)
   const [formData, setFormData] = useState({
     name: "",
     description: "",
-    updateFrequency: "daily" as Source["updateFrequency"],
   })
 
   useEffect(() => {
@@ -222,7 +222,6 @@ export function AddSourceDialog({ open, onOpenChange, onAdd }: AddSourceDialogPr
     setFormData({
       name: "",
       description: "",
-      updateFrequency: "daily",
     })
   }
 
@@ -230,38 +229,52 @@ export function AddSourceDialog({ open, onOpenChange, onAdd }: AddSourceDialogPr
     e.preventDefault()
     if (!selectedType || !formData.name || !url || !urlValidation?.isValid) return
 
-    const newSource = {
-      name: formData.name,
-      type: selectedType,
-      url: url,
-      description: formData.description,
-      isActive: true,
-      lastSync: "Never",
-      itemCount: 0,
-      status: "syncing" as const,
-      tags: [],
-      updateFrequency: formData.updateFrequency,
+    setIsSubmitting(true)
+
+    try {
+      // Obtener favicon
+      const faviconUrl = await fetchFaviconUrl(url)
+
+      // Crear fuente en Supabase
+      await sourceService.createSource({
+        title: formData.name,
+        url: url,
+        description: formData.description || null,
+        favicon_url: faviconUrl,
+        source_type: selectedType,
+      })
+
+      // Mostrar toast de éxito
+      toast.success("Fuente añadida", {
+        description: `${formData.name} ha sido añadida exitosamente`,
+      })
+
+      // Resetear formulario
+      handleReset()
+
+      // Cerrar diálogo
+      onOpenChange(false)
+
+      // Notificar al padre para actualizar la lista
+      if (onSourceAdded) {
+        onSourceAdded()
+      }
+    } catch (error: any) {
+      console.error("Error adding source:", error)
+      
+      // Mostrar error específico
+      if (error.message?.includes('duplicate')) {
+        toast.error("Fuente duplicada", {
+          description: "Esta fuente ya existe en tu lista",
+        })
+      } else {
+        toast.error("Error al añadir fuente", {
+          description: error.message || "No se pudo añadir la fuente. Intenta de nuevo.",
+        })
+      }
+    } finally {
+      setIsSubmitting(false)
     }
-
-    // Añadir la fuente
-    onAdd(newSource)
-
-    // Resetear formulario
-    handleReset()
-
-    // Cerrar diálogo
-    onOpenChange(false)
-
-    // Mostrar toast de inicio de sincronización
-    toast.info("Fuente añadida", {
-      description: "Descargando artículos del feed RSS...",
-    })
-
-    // Sincronizar automáticamente (necesitamos el ID real de la fuente creada)
-    // Por ahora, recargamos la página para ver las fuentes actualizadas
-    setTimeout(() => {
-      window.location.reload()
-    }, 1000)
   }
 
   return (
@@ -354,36 +367,16 @@ export function AddSourceDialog({ open, onOpenChange, onAdd }: AddSourceDialogPr
 
           {selectedType && urlValidation?.isValid && (
             <div className="space-y-2 pt-4 border-t border-glass-border">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">Source Name *</Label>
-                  <Input
-                    id="name"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="e.g., TechCrunch, @vercel"
-                    className="glass"
-                    required
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="frequency">Update Frequency</Label>
-                  <Select 
-                    value={formData.updateFrequency} 
-                    onValueChange={(value) => setFormData({ ...formData, updateFrequency: value as Source["updateFrequency"] })}
-                  >
-                    <SelectTrigger className="glass">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="glass-card">
-                      <SelectItem value="realtime">Real-time</SelectItem>
-                      <SelectItem value="hourly">Hourly</SelectItem>
-                      <SelectItem value="daily">Daily</SelectItem>
-                      <SelectItem value="weekly">Weekly</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="name">Source Name *</Label>
+                <Input
+                  id="name"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder="e.g., TechCrunch, @vercel"
+                  className="glass"
+                  required
+                />
               </div>
 
               <div className="space-y-2">
@@ -405,16 +398,26 @@ export function AddSourceDialog({ open, onOpenChange, onAdd }: AddSourceDialogPr
               variant="outline"
               onClick={handleReset}
               className="glass"
+              disabled={isSubmitting}
             >
               Reset
             </Button>
             <Button
               type="submit"
               className="glass"
-              disabled={!selectedType || !formData.name || !url || !urlValidation?.isValid}
+              disabled={!selectedType || !formData.name || !url || !urlValidation?.isValid || isSubmitting}
             >
-              <Plus className="h-4 w-4 mr-2" />
-              Add Source
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Adding...
+                </>
+              ) : (
+                <>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Source
+                </>
+              )}
             </Button>
           </div>
         </form>

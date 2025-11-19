@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { ContentCard } from "@/components/content-card"
 import { ContentViewer } from "@/components/content-viewer"
@@ -9,103 +9,20 @@ import { AddSourceDialog } from "@/components/add-source-dialog"
 import { LayoutGrid, List, RefreshCw, Loader2, Plus } from "lucide-react"
 import { useInfiniteScroll } from "@/hooks/use-infinite-scroll"
 import { useSubscription } from "@/contexts/subscription-context"
-
-// Mock data for different content types
-const mockContent = [
-  {
-    id: "1",
-    type: "news" as const,
-    title: "The Future of Sustainable Technology in 2025",
-    excerpt:
-      "Exploring breakthrough innovations that are reshaping how we think about environmental responsibility in tech.",
-    source: "TechCrunch",
-    author: "Sarah Chen",
-    publishedAt: "2 hours ago",
-    readTime: "5 min read",
-    image: "/placeholder.svg?height=200&width=400",
-    tags: ["Technology", "Sustainability", "Innovation"],
-    isRead: false,
-    isSaved: false,
-  },
-  {
-    id: "2",
-    type: "youtube" as const,
-    title: "Building Modern Web Applications with Next.js 15",
-    excerpt: "A comprehensive guide to the latest features and best practices for modern web development.",
-    source: "Vercel",
-    author: "Lee Robinson",
-    publishedAt: "4 hours ago",
-    duration: "24:15",
-    image: "/placeholder.svg?height=200&width=400",
-    tags: ["Web Development", "Next.js", "Tutorial"],
-    isRead: false,
-    isSaved: true,
-    views: "125K views",
-  },
-  {
-    id: "3",
-    type: "twitter" as const,
-    title: "Thread: The psychology behind great product design",
-    excerpt: "A fascinating deep-dive into how cognitive biases influence user experience decisions. 🧠✨",
-    source: "Twitter",
-    author: "@designpsych",
-    publishedAt: "6 hours ago",
-    image: "/placeholder.svg?height=200&width=400",
-    tags: ["Design", "Psychology", "UX"],
-    isRead: true,
-    isSaved: false,
-    engagement: "2.4K likes • 180 retweets",
-  },
-  {
-    id: "4",
-    type: "newsletter" as const,
-    title: "Weekly Design Inspiration #47",
-    excerpt: "This week's curated collection of stunning interfaces, innovative interactions, and design thinking.",
-    source: "Design Weekly",
-    author: "Maria Rodriguez",
-    publishedAt: "1 day ago",
-    readTime: "8 min read",
-    image: "/placeholder.svg?height=200&width=400",
-    tags: ["Design", "Inspiration", "UI/UX"],
-    isRead: false,
-    isSaved: false,
-  },
-  {
-    id: "5",
-    type: "instagram" as const,
-    title: "Behind the scenes of our latest photoshoot",
-    excerpt: "Take a look at the creative process behind our minimalist fashion campaign.",
-    source: "Instagram",
-    author: "@studiominimal",
-    publishedAt: "8 hours ago",
-    image: "/placeholder.svg?height=200&width=400",
-    tags: ["Fashion", "Photography", "Behind the Scenes"],
-    isRead: false,
-    isSaved: false,
-    engagement: "1.8K likes • 45 comments",
-  },
-  {
-    id: "6",
-    type: "tiktok" as const,
-    title: "Quick productivity hack that changed my workflow",
-    excerpt: "A simple technique that can save you hours every week. Try it and let me know what you think!",
-    source: "TikTok",
-    author: "@productivitypro",
-    publishedAt: "12 hours ago",
-    duration: "0:47",
-    image: "/placeholder.svg?height=200&width=400",
-    tags: ["Productivity", "Tips", "Workflow"],
-    isRead: false,
-    isSaved: true,
-    views: "89K views",
-  },
-]
+import { useAuth } from "@/contexts/auth-context"
+import { articleService } from "@/lib/services/article-service"
+import { sourceService } from "@/lib/services/source-service"
+import type { ArticleWithUserData } from "@/types/database"
 
 export function ContentFeed() {
+  const { isAuthenticated, isLoading: authLoading } = useAuth()
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [displayedItems, setDisplayedItems] = useState(6) // Start with 6 items
   const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [isLoadingInitial, setIsLoadingInitial] = useState(true)
+  const [articles, setArticles] = useState<ArticleWithUserData[]>([])
+  const [isSyncing, setIsSyncing] = useState(false)
   const itemsPerPage = 6
 
   const [filters, setFilters] = useState<FilterState>({
@@ -126,14 +43,85 @@ export function ContentFeed() {
   const [cardPosition, setCardPosition] = useState<DOMRect | null>(null)
 
   const [isAddSourceOpen, setIsAddSourceOpen] = useState(false)
-  const { canAddSource } = useSubscription()
-  const [sources, setSources] = useState<any[]>([]) // This would come from a sources context in production
+  const { canAddSource, getSourceLimit } = useSubscription()
+  const [sourceCount, setSourceCount] = useState(0)
+
+  // Cargar artículos al montar el componente, solo si está autenticado
+  useEffect(() => {
+    if (isAuthenticated && !authLoading) {
+      loadArticles()
+      loadSourceCount()
+      // Solo sincronizar feeds si hay fuentes
+      loadSourceCount().then(() => {
+        if (sourceCount > 0) {
+          syncFeeds()
+        }
+      })
+    }
+  }, [isAuthenticated, authLoading])
+
+  const syncFeeds = async () => {
+    try {
+      setIsSyncing(true)
+      const response = await fetch('/api/feeds/refresh', {
+        method: 'POST',
+      })
+      
+      if (!response.ok) {
+        // Solo loguear si no es un 404 o similar
+        if (response.status >= 500) {
+          console.error('Server error syncing feeds:', response.status)
+        }
+        return
+      }
+      
+      const data = await response.json()
+      if (data.totalArticlesAdded > 0) {
+        console.log(`Synced ${data.totalArticlesAdded} new articles`)
+      }
+    } catch (error) {
+      // Silently fail - user might not have sources yet
+    } finally {
+      setIsSyncing(false)
+    }
+  }
+
+  const loadSourceCount = async () => {
+    try {
+      const sources = await sourceService.getUserSources(true)
+      setSourceCount(sources.length)
+    } catch (error) {
+      console.error('Error loading source count:', error)
+    }
+  }
+
+  const loadArticles = async () => {
+    setIsLoadingInitial(true)
+    try {
+      const fetchedArticles = await articleService.getRecentFeedArticles({
+        limit: 50 // Cargar más artículos inicialmente para filtrado local
+      })
+      setArticles(fetchedArticles)
+    } catch (error) {
+      console.error('Error loading articles:', error)
+    } finally {
+      setIsLoadingInitial(false)
+    }
+  }
 
   const handleRefresh = async () => {
     setIsRefreshing(true)
     setDisplayedItems(6)
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    await syncFeeds() // Primero sincronizar feeds
+    await loadArticles() // Luego cargar artículos actualizados
+    await loadSourceCount()
     setIsRefreshing(false)
+  }
+
+  const handleSourceAdded = async () => {
+    await syncFeeds() // Sincronizar después de agregar una fuente
+    await loadArticles()
+    await loadSourceCount()
   }
 
   const handleOpenViewer = (content: any, cardElement: HTMLElement) => {
@@ -151,46 +139,61 @@ export function ContentFeed() {
     }, 300)
   }
 
-  const handleAddSource = (newSource: any) => {
-    setSources((prev) => [...prev, { ...newSource, id: Date.now().toString() }])
-    setIsAddSourceOpen(false)
+  const handleNavigateNext = () => {
+    if (!viewerContent) return
+    const currentIndex = filteredAndSortedContent.findIndex((item) => item.id === viewerContent.id)
+    if (currentIndex !== -1 && currentIndex < filteredAndSortedContent.length - 1) {
+      const nextContent = filteredAndSortedContent[currentIndex + 1]
+      setViewerContent(nextContent)
+      setCardPosition(null) // No animar desde tarjeta al navegar
+    }
+  }
+
+  const handleNavigatePrevious = () => {
+    if (!viewerContent) return
+    const currentIndex = filteredAndSortedContent.findIndex((item) => item.id === viewerContent.id)
+    if (currentIndex > 0) {
+      const previousContent = filteredAndSortedContent[currentIndex - 1]
+      setViewerContent(previousContent)
+      setCardPosition(null) // No animar desde tarjeta al navegar
+    }
   }
 
   const filteredAndSortedContent = useMemo(() => {
-    const filtered = mockContent.filter((item) => {
+    const filtered = articles.filter((article) => {
       if (filters.search) {
         const searchTerm = filters.search.toLowerCase()
         if (
-          !item.title.toLowerCase().includes(searchTerm) &&
-          !item.excerpt.toLowerCase().includes(searchTerm) &&
-          !item.author.toLowerCase().includes(searchTerm) &&
-          !item.source.toLowerCase().includes(searchTerm)
+          !article.title.toLowerCase().includes(searchTerm) &&
+          !(article.excerpt || '').toLowerCase().includes(searchTerm) &&
+          !(article.author || '').toLowerCase().includes(searchTerm) &&
+          !article.source.title.toLowerCase().includes(searchTerm)
         ) {
           return false
         }
       }
 
-      if (filters.types.length > 0 && !filters.types.includes(item.type)) {
+      if (filters.types.length > 0 && !filters.types.includes(article.source.source_type as any)) {
         return false
       }
 
-      if (filters.sources.length > 0 && !filters.sources.includes(item.source)) {
+      if (filters.sources.length > 0 && !filters.sources.includes(article.source.title)) {
         return false
       }
 
-      if (filters.tags.length > 0 && !filters.tags.some((tag) => item.tags.includes(tag))) {
-        return false
-      }
+      // Tags no están implementados en la BD todavía, se puede omitir
+      // if (filters.tags.length > 0 && !filters.tags.some((tag) => item.tags.includes(tag))) {
+      //   return false
+      // }
 
-      if (filters.readStatus === "read" && !item.isRead) return false
-      if (filters.readStatus === "unread" && item.isRead) return false
+      if (filters.readStatus === "read" && !article.user_article?.is_read) return false
+      if (filters.readStatus === "unread" && article.user_article?.is_read) return false
 
-      if (filters.savedStatus === "saved" && !item.isSaved) return false
-      if (filters.savedStatus === "unsaved" && item.isSaved) return false
+      if (filters.savedStatus === "saved" && !article.user_article?.is_favorite) return false
+      if (filters.savedStatus === "unsaved" && article.user_article?.is_favorite) return false
 
-      if (item.readTime) {
-        const readTimeMinutes = Number.parseInt(item.readTime.split(" ")[0])
-        if (readTimeMinutes < filters.readTimeRange[0] || readTimeMinutes > filters.readTimeRange[1]) {
+      if (article.reading_time) {
+        if (article.reading_time < filters.readTimeRange[0] || article.reading_time > filters.readTimeRange[1]) {
           return false
         }
       }
@@ -206,28 +209,13 @@ export function ContentFeed() {
           comparison = a.title.localeCompare(b.title)
           break
         case "source":
-          comparison = a.source.localeCompare(b.source)
-          break
-        case "engagement":
-          const aEngagement =
-            Number.parseInt(a.views?.split("K")[0] || "0") + Number.parseInt(a.engagement?.split("K")[0] || "0")
-          const bEngagement =
-            Number.parseInt(b.views?.split("K")[0] || "0") + Number.parseInt(b.engagement?.split("K")[0] || "0")
-          comparison = aEngagement - bEngagement
+          comparison = a.source.title.localeCompare(b.source.title)
           break
         case "date":
         default:
-          const timeUnits = { minute: 1, minutes: 1, hour: 60, hours: 60, day: 1440, days: 1440 }
-          const getMinutes = (timeStr: string) => {
-            const match = timeStr.match(/(\d+)\s+(minute|minutes|hour|hours|day|days)/)
-            if (match) {
-              const value = Number.parseInt(match[1])
-              const unit = match[2] as keyof typeof timeUnits
-              return value * timeUnits[unit]
-            }
-            return 0
-          }
-          comparison = getMinutes(a.publishedAt) - getMinutes(b.publishedAt)
+          const aDate = a.published_at ? new Date(a.published_at).getTime() : 0
+          const bDate = b.published_at ? new Date(b.published_at).getTime() : 0
+          comparison = aDate - bDate
           break
       }
 
@@ -235,11 +223,15 @@ export function ContentFeed() {
     })
 
     return filtered
-  }, [filters])
+  }, [articles, filters])
 
   const displayedContent = useMemo(() => {
     return filteredAndSortedContent.slice(0, displayedItems)
   }, [filteredAndSortedContent, displayedItems])
+
+  const currentIndex = viewerContent ? filteredAndSortedContent.findIndex((item) => item.id === viewerContent.id) : -1
+  const hasNext = currentIndex !== -1 && currentIndex < filteredAndSortedContent.length - 1
+  const hasPrevious = currentIndex > 0
 
   const hasNextPage = displayedItems < filteredAndSortedContent.length
 
@@ -260,12 +252,32 @@ export function ContentFeed() {
   })
 
   const availableSources = useMemo(() => {
-    return Array.from(new Set(mockContent.map((item) => item.source))).sort()
-  }, [])
+    return Array.from(new Set(articles.map((article) => article.source.title))).sort()
+  }, [articles])
 
   const availableTags = useMemo(() => {
-    return Array.from(new Set(mockContent.flatMap((item) => item.tags))).sort()
-  }, [])
+    // Tags aún no implementados en BD
+    return []
+  }, [articles])
+
+  // No mostrar nada si no está autenticado
+  if (!isAuthenticated || authLoading) {
+    return null
+  }
+
+  if (isLoadingInitial) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="flex flex-col items-center gap-4 text-muted-foreground">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          <div className="text-center">
+            <p className="font-medium">Loading your feed...</p>
+            {isSyncing && <p className="text-sm mt-1">Syncing latest articles from your sources...</p>}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -274,12 +286,12 @@ export function ContentFeed() {
           <h1 className="text-3xl font-playfair font-bold text-balance">Your Content Universe</h1>
           <p className="text-muted-foreground mt-1">
             {displayedContent.length} of {filteredAndSortedContent.length} items •{" "}
-            {mockContent.filter((item) => !item.isRead).length} unread
+            {articles.filter((article) => !article.user_article?.is_read).length} unread
           </p>
         </div>
 
         <div className="flex items-center gap-2">
-          {canAddSource && (
+          {canAddSource(sourceCount) && (
             <Button variant="outline" size="sm" onClick={() => setIsAddSourceOpen(true)} className="glass hover-lift-subtle">
               <Plus className="h-4 w-4 mr-2" />
               Add Source
@@ -288,7 +300,7 @@ export function ContentFeed() {
 
           <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={isRefreshing} className="glass hover-lift-subtle">
             <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
-            Refresh
+            {isRefreshing ? 'Syncing...' : 'Refresh'}
           </Button>
 
           <div className="flex items-center glass rounded-lg p-1">
@@ -319,18 +331,29 @@ export function ContentFeed() {
         availableTags={availableTags}
       />
 
-      <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6" : "space-y-4"}>
-        {displayedContent.map((item) => (
-          <ContentCard key={item.id} content={item} viewMode={viewMode} onOpenViewer={handleOpenViewer} />
-        ))}
-      </div>
-
-      {filteredAndSortedContent.length === 0 && (
+      {filteredAndSortedContent.length === 0 ? (
         <div className="text-center py-12">
           <div className="text-muted-foreground">
-            <p className="text-lg mb-2">No content matches your filters</p>
-            <p className="text-sm">Try adjusting your search criteria or clearing some filters</p>
+            <p className="text-lg mb-2">
+              {articles.length === 0 ? "No articles in your feed yet" : "No content matches your filters"}
+            </p>
+            <p className="text-sm">
+              {articles.length === 0 
+                ? "Add some sources to start seeing content from the last 24 hours" 
+                : "Try adjusting your search criteria or clearing some filters"}
+            </p>
           </div>
+        </div>
+      ) : (
+        <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6" : "space-y-4"}>
+          {displayedContent.map((article) => (
+            <ContentCard 
+              key={article.id} 
+              article={article} 
+              viewMode={viewMode} 
+              onOpenViewer={handleOpenViewer} 
+            />
+          ))}
         </div>
       )}
 
@@ -350,7 +373,7 @@ export function ContentFeed() {
           <div className="text-muted-foreground text-sm">
             You've reached the end of your content feed, no endless scrolling here.
           </div>
-          <img src="🤡" alt="sticker" className="mx-auto mt-4 h-24 w-24 opacity-50" />
+          <div className="mx-auto mt-4 text-6xl opacity-50">✅</div>
         </div>
       )}
 
@@ -359,9 +382,17 @@ export function ContentFeed() {
         isOpen={isViewerOpen}
         onClose={handleCloseViewer}
         cardPosition={cardPosition}
+        onNavigateNext={handleNavigateNext}
+        onNavigatePrevious={handleNavigatePrevious}
+        hasNext={hasNext}
+        hasPrevious={hasPrevious}
       />
 
-      <AddSourceDialog open={isAddSourceOpen} onOpenChange={setIsAddSourceOpen} onAdd={handleAddSource} />
+      <AddSourceDialog 
+        open={isAddSourceOpen} 
+        onOpenChange={setIsAddSourceOpen} 
+        onSourceAdded={handleSourceAdded}
+      />
     </div>
   )
 }

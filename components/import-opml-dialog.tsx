@@ -10,7 +10,7 @@ import { Upload, FileText, CheckCircle, AlertCircle } from "lucide-react"
 interface ImportOPMLDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onImport: (sources: Omit<Source, "id">[]) => void
+  onImport: () => void | Promise<void>
 }
 
 interface Source {
@@ -105,10 +105,13 @@ export function ImportOPMLDialog({ open, onOpenChange, onImport }: ImportOPMLDia
   }
 
   const handleImport = () => {
-    onImport(parsedSources)
+    // TODO: Aquí deberíamos procesar y guardar las fuentes en Supabase
+    // Por ahora solo refrescamos la lista
+    onImport()
     setFile(null)
     setParsedSources([])
     setError(null)
+    onOpenChange(false)
   }
 
   return (

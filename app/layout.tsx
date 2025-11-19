@@ -1,10 +1,11 @@
 import type React from "react"
-import type { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import { Inter, Playfair_Display } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import { Suspense } from "react"
 import { AuthProvider } from "@/contexts/auth-context"
 import { SubscriptionProvider } from "@/contexts/subscription-context"
+import { SessionSyncProvider } from "@/components/session-sync-provider"
 import "./globals.css"
 
 const inter = Inter({
@@ -25,6 +26,14 @@ export const metadata: Metadata = {
   generator: "Lexora",
 }
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
+}
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -35,7 +44,9 @@ export default function RootLayout({
       <body className="font-sans antialiased">
         <AuthProvider>
           <SubscriptionProvider>
-            <Suspense fallback={null}>{children}</Suspense>
+            <SessionSyncProvider>
+              <Suspense fallback={null}>{children}</Suspense>
+            </SessionSyncProvider>
           </SubscriptionProvider>
         </AuthProvider>
         <Analytics />

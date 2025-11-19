@@ -118,6 +118,21 @@
     background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.15) 1px, transparent 0);
     background-size: 20px 20px;
   }
+  
+  /* Support for dynamic viewport units on mobile Safari */
+  html {
+    height: 100%;
+    /* Fallback for browsers that don't support dvh */
+    height: 100vh;
+    /* Dynamic viewport height - adjusts when Safari's UI appears/disappears */
+    height: 100dvh;
+  }
+  
+  body {
+    min-height: 100%;
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
 }
 
 /* Added glassmorphism utility classes */
@@ -242,5 +257,26 @@
 
   .sidebar-scrollbar::-webkit-scrollbar-thumb:hover {
     background: var(--border);
+  }
+
+  /* Hide scrollbar but keep functionality */
+  .scrollbar-hide {
+    -ms-overflow-style: none; /* IE and Edge */
+    scrollbar-width: none; /* Firefox */
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none; /* Chrome, Safari and Opera */
+  }
+  
+  /* Dynamic viewport height support */
+  .h-screen-dynamic {
+    height: 100vh;
+    height: 100dvh;
+  }
+  
+  .min-h-screen-dynamic {
+    min-height: 100vh;
+    min-height: 100dvh;
   }
 }

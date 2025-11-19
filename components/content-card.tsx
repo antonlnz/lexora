@@ -8,72 +8,95 @@ import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { Bookmark, BookmarkCheck, Clock, ExternalLink, Play, Share, User } from "lucide-react"
 import Image from "next/image"
-
-interface ContentItem {
-  id: string
-  type: "news" | "youtube" | "twitter" | "instagram" | "tiktok" | "newsletter"
-  title: string
-  excerpt: string
-  source: string
-  author: string
-  publishedAt: string
-  readTime?: string
-  duration?: string
-  image: string
-  tags: string[]
-  isRead: boolean
-  isSaved: boolean
-  views?: string
-  engagement?: string
-}
+import type { ArticleWithUserData } from "@/types/database"
+import { articleService } from "@/lib/services/article-service"
 
 interface ContentCardProps {
-  content: ContentItem
+  article: ArticleWithUserData
   viewMode: "grid" | "list"
-  onOpenViewer?: (content: ContentItem, cardElement: HTMLElement) => void
+  onOpenViewer?: (article: ArticleWithUserData, cardElement: HTMLElement) => void
 }
 
-const typeIcons = {
+const typeIcons: Record<string, string> = {
   news: "📰",
+  rss: "📰",
   youtube: "🎥",
   twitter: "🐦",
   instagram: "📸",
   tiktok: "🎵",
   newsletter: "📧",
+  website: "🌐",
 }
 
-const typeColors = {
+const typeColors: Record<string, string> = {
   news: "bg-blue-500/10 text-blue-600 border-blue-500/20",
+  rss: "bg-blue-500/10 text-blue-600 border-blue-500/20",
   youtube: "bg-red-500/10 text-red-600 border-red-500/20",
   twitter: "bg-sky-500/10 text-sky-600 border-sky-500/20",
   instagram: "bg-pink-500/10 text-pink-600 border-pink-500/20",
   tiktok: "bg-purple-500/10 text-purple-600 border-purple-500/20",
   newsletter: "bg-green-500/10 text-green-600 border-green-500/20",
+  website: "bg-gray-500/10 text-gray-600 border-gray-500/20",
 }
 
-export function ContentCard({ content, viewMode, onOpenViewer }: ContentCardProps) {
-  const [isSaved, setIsSaved] = useState(content.isSaved)
-  const [isRead, setIsRead] = useState(content.isRead)
+// Función auxiliar para calcular tiempo relativo
+function getRelativeTime(date: string | null): string {
+  if (!date) return "Unknown"
+  
+  const now = new Date()
+  const publishedDate = new Date(date)
+  const diffInMs = now.getTime() - publishedDate.getTime()
+  
+  const minutes = Math.floor(diffInMs / 60000)
+  const hours = Math.floor(diffInMs / 3600000)
+  const days = Math.floor(diffInMs / 86400000)
+  
+  if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`
+  if (hours < 24) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`
+  return `${days} ${days === 1 ? 'day' : 'days'} ago`
+}
+
+export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProps) {
+  const [isSaved, setIsSaved] = useState(article.user_article?.is_favorite || false)
+  const [isRead, setIsRead] = useState(article.user_article?.is_read || false)
   const cardRef = useRef<HTMLDivElement>(null)
 
-  const handleSave = () => {
-    setIsSaved(!isSaved)
+  const handleSave = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      await articleService.toggleFavorite(article.id, !isSaved)
+      setIsSaved(!isSaved)
+    } catch (error) {
+      console.error('Error toggling favorite:', error)
+    }
   }
 
-  const handleMarkRead = () => {
-    setIsRead(!isRead)
+  const handleMarkRead = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      if (!isRead) {
+        await articleService.markAsRead(article.id)
+      }
+      setIsRead(!isRead)
+    } catch (error) {
+      console.error('Error marking as read:', error)
+    }
   }
 
   const handleOpenContent = () => {
     if (onOpenViewer && cardRef.current) {
-      onOpenViewer(content, cardRef.current)
+      onOpenViewer(article, cardRef.current)
     }
   }
 
   const handleOpenInNewTab = (e: React.MouseEvent) => {
     e.stopPropagation()
-    window.open(`/read/${content.id}`, "_blank")
+    window.open(`/read/${article.id}`, "_blank")
   }
+
+  const sourceType = article.source.source_type
+  const relativeTime = getRelativeTime(article.published_at)
+  const readTime = article.reading_time ? `${article.reading_time} min read` : undefined
 
   if (viewMode === "list") {
     return (
@@ -83,22 +106,22 @@ export function ContentCard({ content, viewMode, onOpenViewer }: ContentCardProp
         onClick={handleOpenContent}
       >
         <div className="flex gap-4">
-          <div className="relative w-24 h-24 flex-shrink-0 rounded-lg overflow-hidden">
-            <Image src={content.image || "/placeholder.svg"} alt={content.title} fill className="object-cover" />
-            {content.duration && (
-              <div className="absolute bottom-1 right-1 bg-black/80 text-white text-xs px-1 rounded">
-                {content.duration}
-              </div>
-            )}
+          <div className="relative w-24 h-24 shrink-0 rounded-lg overflow-hidden">
+            <Image 
+              src={article.image_url || "/placeholder.svg"} 
+              alt={article.title} 
+              fill 
+              className="object-cover" 
+            />
           </div>
 
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-2 mb-2">
               <div className="flex items-center gap-2 flex-wrap">
-                <Badge variant="outline" className={typeColors[content.type]}>
-                  {typeIcons[content.type]} {content.type}
+                <Badge variant="outline" className={typeColors[sourceType] || typeColors.rss}>
+                  {typeIcons[sourceType] || typeIcons.rss} {sourceType}
                 </Badge>
-                <span className="text-sm text-muted-foreground">{content.source}</span>
+                <span className="text-sm text-muted-foreground">{article.source.title}</span>
               </div>
               <div className="flex items-center gap-1">
                 <Button variant="ghost" size="sm" onClick={handleSave} className="h-8 w-8 p-0">
@@ -110,30 +133,27 @@ export function ContentCard({ content, viewMode, onOpenViewer }: ContentCardProp
               </div>
             </div>
 
-            <h3 className="font-semibold text-lg mb-2 line-clamp-2 text-pretty">{content.title}</h3>
-            <p className="text-muted-foreground text-sm mb-3 line-clamp-2">{content.excerpt}</p>
+            <h3 className="font-semibold text-lg mb-2 line-clamp-2 text-pretty">{article.title}</h3>
+            <p className="text-muted-foreground text-sm mb-3 line-clamp-2">{article.excerpt || "No excerpt available"}</p>
 
             <div className="flex items-center justify-between text-sm text-muted-foreground">
               <div className="flex items-center gap-4">
-                <span className="flex items-center gap-1">
-                  <User className="h-3 w-3" />
-                  {content.author}
-                </span>
+                {article.author && (
+                  <span className="flex items-center gap-1">
+                    <User className="h-3 w-3" />
+                    {article.author}
+                  </span>
+                )}
                 <span className="flex items-center gap-1">
                   <Clock className="h-3 w-3" />
-                  {content.publishedAt}
+                  {relativeTime}
                 </span>
-                {content.readTime && <span>{content.readTime}</span>}
-                {content.views && <span>{content.views}</span>}
-                {content.engagement && <span>{content.engagement}</span>}
+                {readTime && <span>{readTime}</span>}
               </div>
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handleMarkRead()
-                }}
+                onClick={handleMarkRead}
                 className="text-xs"
               >
                 {isRead ? "Mark Unread" : "Mark Read"}
@@ -144,10 +164,7 @@ export function ContentCard({ content, viewMode, onOpenViewer }: ContentCardProp
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handleMarkRead()
-                }}
+                onClick={handleMarkRead}
                 className="text-xs"
               >
                 {isRead ? "Mark Unread" : "Mark Read"}
@@ -171,33 +188,28 @@ export function ContentCard({ content, viewMode, onOpenViewer }: ContentCardProp
     >
       <div className="relative aspect-video overflow-hidden">
         <Image
-          src={content.image || "/placeholder.svg"}
-          alt={content.title}
+          src={article.image_url || "/placeholder.svg"}
+          alt={article.title}
           fill
           className="object-cover group-hover:scale-105 transition-transform duration-300"
         />
-        {content.duration && (
-          <div className="absolute bottom-2 right-2 bg-black/80 text-white text-sm px-2 py-1 rounded">
-            {content.duration}
-          </div>
-        )}
-        {content.type === "youtube" || content.type === "tiktok" ? (
+        {(sourceType === "youtube" || sourceType === "tiktok") && (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="bg-black/50 rounded-full p-3 group-hover:bg-black/70 transition-colors">
               <Play className="h-6 w-6 text-white fill-white" />
             </div>
           </div>
-        ) : null}
+        )}
         <div className="absolute top-2 left-2">
-          <Badge variant="outline" className={`${typeColors[content.type]} backdrop-blur-sm`}>
-            {typeIcons[content.type]} {content.type}
+          <Badge variant="outline" className={`${typeColors[sourceType] || typeColors.rss} backdrop-blur-sm`}>
+            {typeIcons[sourceType] || typeIcons.rss} {sourceType}
           </Badge>
         </div>
       </div>
 
       <div className="p-4">
         <div className="flex items-start justify-between gap-2 mb-2">
-          <span className="text-sm text-muted-foreground font-medium">{content.source}</span>
+          <span className="text-sm text-muted-foreground font-medium">{article.source.title}</span>
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="sm" onClick={handleSave} className="h-8 w-8 p-0">
               {isSaved ? <BookmarkCheck className="h-4 w-4 text-primary" /> : <Bookmark className="h-4 w-4" />}
@@ -208,30 +220,24 @@ export function ContentCard({ content, viewMode, onOpenViewer }: ContentCardProp
           </div>
         </div>
 
-        <h3 className="font-semibold text-lg mb-2 line-clamp-2 text-pretty">{content.title}</h3>
-        <p className="text-muted-foreground text-sm mb-4 line-clamp-3">{content.excerpt}</p>
-
-        <div className="flex flex-wrap gap-1 mb-4">
-          {content.tags.slice(0, 3).map((tag) => (
-            <Badge key={tag} variant="secondary" className="text-xs glass">
-              {tag}
-            </Badge>
-          ))}
-        </div>
+        <h3 className="font-semibold text-lg mb-2 line-clamp-2 text-pretty">{article.title}</h3>
+        <p className="text-muted-foreground text-sm mb-4 line-clamp-3">{article.excerpt || "No excerpt available"}</p>
 
         <div className="flex items-center justify-between text-sm text-muted-foreground">
           <div className="flex items-center gap-2">
-            <span className="flex items-center gap-1">
-              <User className="h-3 w-3" />
-              {content.author}
-            </span>
-            <span>•</span>
-            <span>{content.publishedAt}</span>
+            {article.author && (
+              <>
+                <span className="flex items-center gap-1">
+                  <User className="h-3 w-3" />
+                  {article.author}
+                </span>
+                <span>•</span>
+              </>
+            )}
+            <span>{relativeTime}</span>
           </div>
           <div className="flex items-center gap-2">
-            {content.readTime && <span>{content.readTime}</span>}
-            {content.views && <span>{content.views}</span>}
-            {content.engagement && <span className="text-xs">{content.engagement}</span>}
+            {readTime && <span>{readTime}</span>}
           </div>
         </div>
 
@@ -239,10 +245,7 @@ export function ContentCard({ content, viewMode, onOpenViewer }: ContentCardProp
           <Button
             variant="ghost"
             size="sm"
-            onClick={(e) => {
-              e.stopPropagation()
-              handleMarkRead()
-            }}
+            onClick={handleMarkRead}
             className="text-xs"
           >
             {isRead ? "Mark Unread" : "Mark Read"}
