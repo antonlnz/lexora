@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
@@ -10,15 +10,26 @@ import { createClient } from '@/lib/supabase/client'
  */
 export function useSessionSync() {
   const router = useRouter()
+  const lastRefreshTime = useRef<number>(0)
+  const REFRESH_COOLDOWN = 5000 // 5 segundos de cooldown entre refreshes
 
   useEffect(() => {
     const supabase = createClient()
 
+    // Helper para refrescar con cooldown
+    const refreshWithCooldown = () => {
+      const now = Date.now()
+      if (now - lastRefreshTime.current > REFRESH_COOLDOWN) {
+        lastRefreshTime.current = now
+        router.refresh()
+      }
+    }
+
     // Escuchar eventos de storage para sincronizar entre tabs
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'supabase.auth.token') {
-        // Si el token cambió en otra tab, refrescar
-        router.refresh()
+      if (e.key === 'supabase.auth.token' && e.newValue !== e.oldValue) {
+        // Solo refrescar si el token realmente cambió
+        refreshWithCooldown()
       }
     }
 
@@ -30,7 +41,7 @@ export function useSessionSync() {
         
         if (error || !session) {
           // Si no hay sesión válida, refrescar para que el middleware redirija
-          router.refresh()
+          refreshWithCooldown()
         }
       }
     }

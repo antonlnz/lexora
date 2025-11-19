@@ -26,6 +26,17 @@ export class ArticleService {
     
     if (!user) return []
 
+    // Obtener las fuentes activas del usuario
+    const { data: userSources } = await supabase
+      .from('sources')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+
+    if (!userSources || userSources.length === 0) return []
+
+    const sourceIds = userSources.map(s => s.id)
+
     let query = supabase
       .from('articles')
       .select(`
@@ -33,6 +44,7 @@ export class ArticleService {
         source:sources(*),
         user_article:user_articles(*)
       `)
+      .in('source_id', sourceIds)
       .order('published_at', { ascending: false })
 
     if (options?.sourceId) {

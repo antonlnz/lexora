@@ -1,5 +1,6 @@
 import Parser from 'rss-parser'
 import { createClient as createServerClient } from '@/lib/supabase/server'
+import { contentExtractor } from './content-extractor'
 import type { Article, Source } from '@/types/database'
 
 interface RSSFeedItem {
@@ -41,6 +42,11 @@ export class RSSService {
           ['media:thumbnail', 'mediaThumbnail'],
           ['description', 'description'],
           ['content:encoded', 'contentEncoded'],
+          // Soporte para podcasts y iTunes
+          ['itunes:image', 'itunesImage'],
+          ['itunes:duration', 'itunesDuration'],
+          // Soporte para elementos de imagen estándar
+          ['image', 'imageElement'],
         ],
       },
     })
@@ -60,30 +66,150 @@ export class RSSService {
   }
 
   /**
-   * Extrae la imagen de un item del feed
+   * Extrae información de media (imagen o video) de un item del feed
    */
-  private extractImageUrl(item: any): string | null {
-    // Intentar obtener la imagen de diferentes campos
-    if (item.enclosure?.url && item.enclosure.type?.startsWith('image/')) {
-      return item.enclosure.url
+  private extractMediaInfo(item: any): {
+    imageUrl: string | null
+    videoUrl: string | null
+    mediaType: 'image' | 'video' | 'audio' | 'none'
+    videoDuration: number | null
+  } {
+    let imageUrl: string | null = null
+    let videoUrl: string | null = null
+    let mediaType: 'image' | 'video' | 'audio' | 'none' = 'none'
+    let videoDuration: number | null = null
+
+    // 1. Verificar itunes:image (podcasts y feeds de iTunes) - ALTA PRIORIDAD
+    if (item.itunesImage) {
+      // Puede venir como objeto con atributo href o como string
+      if (typeof item.itunesImage === 'object' && item.itunesImage.$?.href) {
+        imageUrl = item.itunesImage.$.href
+        if (mediaType === 'none') mediaType = 'image'
+      } else if (typeof item.itunesImage === 'string') {
+        imageUrl = item.itunesImage
+        if (mediaType === 'none') mediaType = 'image'
+      }
     }
 
-    if (item.mediaContent?.$ && item.mediaContent.$.url) {
-      return item.mediaContent.$.url
+    // 2. Verificar enclosure para videos/audio/imágenes
+    if (item.enclosure?.url) {
+      const mimeType = item.enclosure.type?.toLowerCase() || ''
+      if (mimeType.startsWith('video/')) {
+        videoUrl = item.enclosure.url
+        mediaType = 'video'
+        // Intentar obtener duración si está disponible
+        if (item.enclosure.length) {
+          videoDuration = Math.floor(Number(item.enclosure.length) / 1000) // convertir de ms a segundos
+        }
+      } else if (mimeType.startsWith('audio/')) {
+        // Es audio (podcast), pero podemos usar la imagen de itunes que ya capturamos
+        mediaType = 'audio'
+        if (item.itunesDuration) {
+          // Convertir duración de formato HH:MM:SS o MM:SS a segundos
+          const duration = item.itunesDuration
+          if (typeof duration === 'string') {
+            const parts = duration.split(':').map(Number)
+            if (parts.length === 3) {
+              videoDuration = parts[0] * 3600 + parts[1] * 60 + parts[2]
+            } else if (parts.length === 2) {
+              videoDuration = parts[0] * 60 + parts[1]
+            } else if (parts.length === 1) {
+              videoDuration = parts[0]
+            }
+          } else if (typeof duration === 'number') {
+            videoDuration = duration
+          }
+        }
+        if (item.enclosure.length && !videoDuration) {
+          videoDuration = Math.floor(Number(item.enclosure.length) / 1000)
+        }
+      } else if (mimeType.startsWith('image/')) {
+        // Solo usar enclosure para imagen si no tenemos itunes:image
+        if (!imageUrl) {
+          imageUrl = item.enclosure.url
+          mediaType = 'image'
+        }
+      }
     }
 
-    if (item.mediaThumbnail?.$ && item.mediaThumbnail.$.url) {
-      return item.mediaThumbnail.$.url
+    // 3. Verificar media:content para videos/imágenes
+    if (item.mediaContent) {
+      const mediaContent = Array.isArray(item.mediaContent) ? item.mediaContent[0] : item.mediaContent
+      if (mediaContent?.$) {
+        const url = mediaContent.$.url
+        const type = mediaContent.$.type?.toLowerCase() || ''
+        const medium = mediaContent.$.medium?.toLowerCase() || ''
+        
+        if (type.startsWith('video/') || medium === 'video') {
+          videoUrl = url
+          mediaType = 'video'
+          if (mediaContent.$.duration) {
+            videoDuration = Number(mediaContent.$.duration)
+          }
+        } else if ((type.startsWith('image/') || medium === 'image') && !imageUrl) {
+          // Solo usar media:content para imagen si no tenemos itunes:image
+          imageUrl = url
+          if (mediaType === 'none') mediaType = 'image'
+        }
+      }
     }
 
-    // Buscar imágenes en el contenido HTML
+    // 4. Verificar media:thumbnail para imagen de poster/thumbnail
+    if (item.mediaThumbnail && !imageUrl) {
+      const thumbnail = Array.isArray(item.mediaThumbnail) ? item.mediaThumbnail[0] : item.mediaThumbnail
+      if (thumbnail?.$ && thumbnail.$.url) {
+        imageUrl = thumbnail.$.url
+        if (mediaType === 'none') mediaType = 'image'
+      }
+    }
+
+    // 5. Verificar elemento <image> estándar de RSS
+    if (item.imageElement && !imageUrl) {
+      if (typeof item.imageElement === 'object' && item.imageElement.url) {
+        imageUrl = item.imageElement.url
+        if (mediaType === 'none') mediaType = 'image'
+      } else if (typeof item.imageElement === 'string') {
+        imageUrl = item.imageElement
+        if (mediaType === 'none') mediaType = 'image'
+      }
+    }
+
+    // 6. Buscar videos en el contenido HTML (YouTube, Vimeo, etc.)
     const content = item.contentEncoded || item.content || item.description || ''
-    const imgMatch = content.match(/<img[^>]+src="([^">]+)"/)
-    if (imgMatch) {
-      return imgMatch[1]
+    
+    // Detectar iframes de video (YouTube, Vimeo, etc.)
+    const iframeMatch = content.match(/<iframe[^>]+src="([^"]+)"/)
+    if (iframeMatch && !videoUrl) {
+      const iframeSrc = iframeMatch[1]
+      if (iframeSrc.includes('youtube.com') || iframeSrc.includes('youtu.be') || 
+          iframeSrc.includes('vimeo.com') || iframeSrc.includes('dailymotion.com')) {
+        videoUrl = iframeSrc
+        if (mediaType === 'none' || mediaType === 'image') mediaType = 'video'
+      }
     }
 
-    return null
+    // Detectar tags de video HTML5
+    const videoMatch = content.match(/<video[^>]+src="([^"]+)"/)
+    if (videoMatch && !videoUrl) {
+      videoUrl = videoMatch[1]
+      if (mediaType === 'none' || mediaType === 'image') mediaType = 'video'
+    }
+
+    // 7. Buscar imágenes en el contenido HTML si no hay imagen todavía
+    if (!imageUrl) {
+      const imgMatch = content.match(/<img[^>]+src="([^">]+)"/)
+      if (imgMatch) {
+        imageUrl = imgMatch[1]
+        if (mediaType === 'none') mediaType = 'image'
+      }
+    }
+
+    return {
+      imageUrl,
+      videoUrl,
+      mediaType,
+      videoDuration,
+    }
   }
 
   /**
@@ -161,21 +287,48 @@ export class RSSService {
       for (const item of recentItems) {
         if (!item.link || !item.title) continue
 
-        const content = this.extractContent(item)
-        const excerpt = this.extractExcerpt(item)
-        const imageUrl = this.extractImageUrl(item)
-        const readingTime = this.calculateReadingTime(content)
-        const wordCount = content.trim().split(/\s+/).length
+        // Primero obtener datos básicos del RSS
+        const rssContent = this.extractContent(item)
+        const rssExcerpt = this.extractExcerpt(item)
+        const mediaInfo = this.extractMediaInfo(item)
+
+        // Intentar extraer contenido completo de la URL original
+        let extractedContent = null
+        try {
+          // Pasar la imagen destacada para evitar duplicados
+          extractedContent = await contentExtractor.extractFromUrl(item.link, {
+            featuredImageUrl: mediaInfo.imageUrl
+          })
+        } catch (error) {
+          console.error(`Failed to extract content from ${item.link}:`, error)
+        }
+
+        // Usar contenido extraído si está disponible, sino usar el del RSS
+        const finalContent = extractedContent?.content || rssContent || null
+        const finalTextContent = extractedContent?.textContent || rssContent || null
+        const finalExcerpt = extractedContent?.excerpt || rssExcerpt || null
+        const finalAuthor = extractedContent?.byline || item.author || null
+
+        // Calcular reading time y word count del contenido final
+        const readingTime = finalTextContent 
+          ? contentExtractor.calculateReadingTime(finalTextContent)
+          : this.calculateReadingTime(rssContent)
+        const wordCount = finalTextContent
+          ? contentExtractor.countWords(finalTextContent)
+          : rssContent.trim().split(/\s+/).length
 
         const articleData = {
           source_id: source.id,
           title: item.title,
           url: item.link,
-          content: content || null,
-          excerpt: excerpt || null,
-          author: item.author || null,
+          content: finalContent,
+          excerpt: finalExcerpt,
+          author: finalAuthor,
           published_at: item.isoDate || item.pubDate || new Date().toISOString(),
-          image_url: imageUrl,
+          image_url: mediaInfo.imageUrl,
+          video_url: mediaInfo.videoUrl,
+          media_type: mediaInfo.mediaType,
+          video_duration: mediaInfo.videoDuration,
           reading_time: readingTime,
           word_count: wordCount,
         }
@@ -218,6 +371,150 @@ export class RSSService {
       }
     } catch (error) {
       console.error(`Error syncing feed for source ${source.id}:`, error)
+      
+      const supabase = await createServerClient()
+      await supabase
+        .from('sources')
+        .update({
+          fetch_error: error instanceof Error ? error.message : 'Unknown error',
+          last_fetched_at: new Date().toISOString(),
+        })
+        .eq('id', source.id)
+
+      return {
+        success: false,
+        articlesAdded: 0,
+        articlesUpdated: 0,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }
+    }
+  }
+
+  /**
+   * Sincroniza artículos de un feed RSS sin filtro de tiempo (para entradas anteriores)
+   */
+  async syncFeedArticlesOlder(source: Source): Promise<{
+    success: boolean
+    articlesAdded: number
+    articlesUpdated: number
+    error?: string
+  }> {
+    try {
+      const supabase = await createServerClient()
+      const feed = await this.fetchFeed(source.url)
+
+      if (!feed) {
+        // Actualizar el source con el error
+        await supabase
+          .from('sources')
+          .update({
+            fetch_error: 'Failed to fetch feed',
+            last_fetched_at: new Date().toISOString(),
+          })
+          .eq('id', source.id)
+
+        return {
+          success: false,
+          articlesAdded: 0,
+          articlesUpdated: 0,
+          error: 'Failed to fetch feed',
+        }
+      }
+
+      // No filtrar por tiempo - tomar todos los items disponibles
+      const items = feed.items.filter((item) => item.link && item.title)
+
+      let articlesAdded = 0
+      let articlesUpdated = 0
+
+      // Procesar cada artículo
+      for (const item of items) {
+        if (!item.link || !item.title) continue
+
+        // Primero obtener datos básicos del RSS
+        const rssContent = this.extractContent(item)
+        const rssExcerpt = this.extractExcerpt(item)
+        const mediaInfo = this.extractMediaInfo(item)
+
+        // Intentar extraer contenido completo de la URL original
+        let extractedContent = null
+        try {
+          // Pasar la imagen destacada para evitar duplicados
+          extractedContent = await contentExtractor.extractFromUrl(item.link, {
+            featuredImageUrl: mediaInfo.imageUrl
+          })
+        } catch (error) {
+          console.error(`Failed to extract content from ${item.link}:`, error)
+        }
+
+        // Usar contenido extraído si está disponible, sino usar el del RSS
+        const finalContent = extractedContent?.content || rssContent || null
+        const finalTextContent = extractedContent?.textContent || rssContent || null
+        const finalExcerpt = extractedContent?.excerpt || rssExcerpt || null
+        const finalAuthor = extractedContent?.byline || item.author || null
+
+        // Calcular reading time y word count del contenido final
+        const readingTime = finalTextContent 
+          ? contentExtractor.calculateReadingTime(finalTextContent)
+          : this.calculateReadingTime(rssContent)
+        const wordCount = finalTextContent
+          ? contentExtractor.countWords(finalTextContent)
+          : rssContent.trim().split(/\s+/).length
+
+        const articleData = {
+          source_id: source.id,
+          title: item.title,
+          url: item.link,
+          content: finalContent,
+          excerpt: finalExcerpt,
+          author: finalAuthor,
+          published_at: item.isoDate || item.pubDate || new Date().toISOString(),
+          image_url: mediaInfo.imageUrl,
+          video_url: mediaInfo.videoUrl,
+          media_type: mediaInfo.mediaType,
+          video_duration: mediaInfo.videoDuration,
+          reading_time: readingTime,
+          word_count: wordCount,
+        }
+
+        // Intentar insertar o actualizar el artículo
+        const { data: existingArticle } = await supabase
+          .from('articles')
+          .select('id')
+          .eq('source_id', source.id)
+          .eq('url', item.link)
+          .single()
+
+        if (existingArticle) {
+          // Actualizar artículo existente
+          await supabase
+            .from('articles')
+            .update(articleData)
+            .eq('id', existingArticle.id)
+          articlesUpdated++
+        } else {
+          // Insertar nuevo artículo
+          await supabase.from('articles').insert(articleData)
+          articlesAdded++
+        }
+      }
+
+      // Actualizar el source con el resultado exitoso
+      await supabase
+        .from('sources')
+        .update({
+          fetch_error: null,
+          last_fetched_at: new Date().toISOString(),
+        })
+        .eq('id', source.id)
+
+      return {
+        success: true,
+        articlesAdded,
+        articlesUpdated,
+      }
+    } catch (error) {
+      console.error(`Error syncing older feed for source ${source.id}:`, error)
       
       const supabase = await createServerClient()
       await supabase

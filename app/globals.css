@@ -198,8 +198,43 @@
     @apply text-xl font-semibold mb-3 mt-6 first:mt-0;
   }
 
+  .prose h4 {
+    @apply text-lg font-semibold mb-3 mt-4 first:mt-0;
+  }
+
+  .prose h5,
+  .prose h6 {
+    @apply text-base font-semibold mb-2 mt-4 first:mt-0;
+  }
+
   .prose p {
     @apply mb-4 leading-relaxed;
+  }
+
+  .prose a {
+    @apply text-primary underline hover:text-primary/80 transition-colors;
+  }
+
+  .prose strong,
+  .prose b {
+    @apply font-semibold;
+  }
+
+  .prose em,
+  .prose i {
+    @apply italic;
+  }
+
+  .prose code {
+    @apply bg-muted px-1.5 py-0.5 rounded text-sm font-mono;
+  }
+
+  .prose pre {
+    @apply bg-muted p-4 rounded-lg overflow-x-auto mb-4;
+  }
+
+  .prose pre code {
+    @apply bg-transparent p-0;
   }
 
   .prose ul,
@@ -207,12 +242,48 @@
     @apply mb-4 pl-6;
   }
 
+  .prose ul {
+    @apply list-disc;
+  }
+
+  .prose ol {
+    @apply list-decimal;
+  }
+
   .prose li {
     @apply mb-2;
   }
 
   .prose blockquote {
-    @apply border-l-4 border-primary pl-4 italic my-6;
+    @apply border-l-4 border-primary pl-4 italic my-6 text-muted-foreground;
+  }
+
+  .prose img {
+    @apply rounded-lg my-6 w-full h-auto;
+  }
+
+  .prose figure {
+    @apply my-6;
+  }
+
+  .prose figcaption {
+    @apply text-sm text-muted-foreground text-center mt-2 italic;
+  }
+
+  .prose hr {
+    @apply my-8 border-border;
+  }
+
+  .prose table {
+    @apply w-full my-6 border-collapse;
+  }
+
+  .prose th {
+    @apply bg-muted px-4 py-2 text-left font-semibold border border-border;
+  }
+
+  .prose td {
+    @apply px-4 py-2 border border-border;
   }
 
   .prose .video-container {
@@ -221,6 +292,10 @@
 
   .prose .video-container video {
     @apply w-full h-full object-cover;
+  }
+
+  .prose iframe {
+    @apply w-full aspect-video rounded-lg my-6;
   }
 
   /* Ambient background animations */

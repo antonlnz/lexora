@@ -40,18 +40,9 @@ interface FilterState {
 interface AdvancedFiltersProps {
   filters: FilterState
   onFiltersChange: (filters: FilterState) => void
-  availableSources: string[]
+  availableSources: Array<{ id: string; title: string; favicon_url: string | null }>
   availableTags: string[]
 }
-
-const contentTypes = [
-  { id: "news", label: "News", color: "bg-blue-500/10 text-blue-600" },
-  { id: "youtube", label: "YouTube", color: "bg-red-500/10 text-red-600" },
-  { id: "twitter", label: "Twitter", color: "bg-sky-500/10 text-sky-600" },
-  { id: "instagram", label: "Instagram", color: "bg-pink-500/10 text-pink-600" },
-  { id: "tiktok", label: "TikTok", color: "bg-purple-500/10 text-purple-600" },
-  { id: "newsletter", label: "Newsletter", color: "bg-green-500/10 text-green-600" },
-]
 
 const sortOptions = [
   { value: "date", label: "Date" },
@@ -62,6 +53,7 @@ const sortOptions = [
 
 export function AdvancedFilters({ filters, onFiltersChange, availableSources, availableTags }: AdvancedFiltersProps) {
   const [isFiltersOpen, setIsFiltersOpen] = useState(false)
+  const [sourceSearchQuery, setSourceSearchQuery] = useState("")
 
   const updateFilters = (updates: Partial<FilterState>) => {
     onFiltersChange({ ...filters, ...updates })
@@ -177,29 +169,68 @@ export function AdvancedFilters({ filters, onFiltersChange, availableSources, av
                   )}
                 </div>
 
-                {/* Content Types */}
+                {/* Sources - Reemplaza Content Types */}
                 <div>
-                  <Label className="text-sm font-medium mb-3 block">Content Types</Label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {contentTypes.map((type) => (
-                      <div key={type.id} className="flex items-center space-x-2">
-                        <Checkbox
-                          id={type.id}
-                          checked={filters.types.includes(type.id)}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              updateFilters({ types: [...filters.types, type.id] })
-                            } else {
-                              updateFilters({ types: filters.types.filter((t) => t !== type.id) })
-                            }
-                          }}
+                  <Label className="text-sm font-medium mb-3 block">Sources</Label>
+                  {availableSources.length > 0 ? (
+                    <>
+                      <div className="relative mb-3">
+                        <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+                        <Input
+                          placeholder="Search sources..."
+                          value={sourceSearchQuery}
+                          onChange={(e) => setSourceSearchQuery(e.target.value)}
+                          className="pl-8 h-8 text-sm"
                         />
-                        <Label htmlFor={type.id} className="text-sm">
-                          {type.label}
-                        </Label>
                       </div>
-                    ))}
-                  </div>
+                      <div className="max-h-48 overflow-y-auto space-y-2">
+                        {availableSources
+                          .filter((source) =>
+                            source.title.toLowerCase().includes(sourceSearchQuery.toLowerCase())
+                          )
+                          .map((source) => (
+                            <div key={source.id} className="flex items-center space-x-2">
+                              <Checkbox
+                                id={`source-${source.id}`}
+                                checked={filters.sources.includes(source.id)}
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    updateFilters({ sources: [...filters.sources, source.id] })
+                                  } else {
+                                    updateFilters({ sources: filters.sources.filter((s) => s !== source.id) })
+                                  }
+                                }}
+                              />
+                              <Label
+                                htmlFor={`source-${source.id}`}
+                                className="text-sm flex items-center gap-2 flex-1 cursor-pointer"
+                              >
+                                {source.favicon_url && (
+                                  <img
+                                    src={source.favicon_url}
+                                    alt=""
+                                    className="h-4 w-4 rounded"
+                                    onError={(e) => {
+                                      e.currentTarget.style.display = "none"
+                                    }}
+                                  />
+                                )}
+                                <span className="truncate">{source.title}</span>
+                              </Label>
+                            </div>
+                          ))}
+                        {availableSources.filter((source) =>
+                          source.title.toLowerCase().includes(sourceSearchQuery.toLowerCase())
+                        ).length === 0 && (
+                          <p className="text-xs text-muted-foreground text-center py-2">
+                            No sources found
+                          </p>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No sources available</p>
+                  )}
                 </div>
 
                 {/* Read Status */}
@@ -286,33 +317,6 @@ export function AdvancedFilters({ filters, onFiltersChange, availableSources, av
                   />
                 </div>
 
-                {/* Sources */}
-                {availableSources.length > 0 && (
-                  <div>
-                    <Label className="text-sm font-medium mb-3 block">Sources</Label>
-                    <div className="max-h-32 overflow-y-auto space-y-2">
-                      {availableSources.map((source) => (
-                        <div key={source} className="flex items-center space-x-2">
-                          <Checkbox
-                            id={`source-${source}`}
-                            checked={filters.sources.includes(source)}
-                            onCheckedChange={(checked) => {
-                              if (checked) {
-                                updateFilters({ sources: [...filters.sources, source] })
-                              } else {
-                                updateFilters({ sources: filters.sources.filter((s) => s !== source) })
-                              }
-                            }}
-                          />
-                          <Label htmlFor={`source-${source}`} className="text-sm">
-                            {source}
-                          </Label>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
                 {/* Tags */}
                 {availableTags.length > 0 && (
                   <div>
@@ -363,35 +367,23 @@ export function AdvancedFilters({ filters, onFiltersChange, availableSources, av
               </Badge>
             )}
 
-            {filters.types.map((type) => (
-              <Badge key={type} variant="secondary" className="glass hover-lift-subtle">
-                <Tag className="h-3 w-3 mr-1" />
-                {contentTypes.find((t) => t.id === type)?.label}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-4 w-4 p-0 ml-1"
-                  onClick={() => updateFilters({ types: filters.types.filter((t) => t !== type) })}
-                >
-                  <X className="h-3 w-3" />
-                </Button>
-              </Badge>
-            ))}
-
-            {filters.sources.map((source) => (
-              <Badge key={source} variant="secondary" className="glass hover-lift-subtle">
-                <User className="h-3 w-3 mr-1" />
-                {source}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-4 w-4 p-0 ml-1"
-                  onClick={() => updateFilters({ sources: filters.sources.filter((s) => s !== source) })}
-                >
-                  <X className="h-3 w-3" />
-                </Button>
-              </Badge>
-            ))}
+            {filters.sources.map((sourceId) => {
+              const source = availableSources.find((s) => s.id === sourceId)
+              return (
+                <Badge key={sourceId} variant="secondary" className="glass hover-lift-subtle">
+                  <User className="h-3 w-3 mr-1" />
+                  {source?.title || sourceId}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-4 w-4 p-0 ml-1"
+                    onClick={() => updateFilters({ sources: filters.sources.filter((s) => s !== sourceId) })}
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                </Badge>
+              )
+            })}
 
             {filters.tags.map((tag) => (
               <Badge key={tag} variant="secondary" className="glass hover-lift-subtle">

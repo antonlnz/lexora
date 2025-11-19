@@ -184,18 +184,18 @@ export function DynamicIsland({
   }, [isExpanded, isSettingsOpen])
 
   const toggleExpanded = () => {
-    // En móvil, siempre expandir/contraer al hacer clic
-    if (isMobile) {
-      setIsExpanded(!isExpanded)
-    }
+    setIsExpanded(!isExpanded)
   }
 
   // Determinar estado visual basado en scroll y hover
-  // En móvil: si está expandida, siempre opaca. Si no, depende del scroll.
+  // En móvil: la opacidad siempre debe ser 1 cuando está expandida o cuando se está interactuando
   // En desktop: normal hover behavior
   const shouldBeCompact = isScrolling && !isExpanded && !isHovered
+  
+  // En móvil, si está expandida O si no está scrolling, opacidad completa
+  // Esto evita el doble clic: cuando no está scrolling y se toca, se expande inmediatamente
   const opacity = isMobile 
-    ? (isExpanded ? 1 : (isScrolling ? 0.4 : 1))
+    ? (isExpanded || !isScrolling ? 1 : 0.4)
     : ((isScrolling && !isHovered && !isExpanded) ? 0.4 : 1)
 
   return (
@@ -214,10 +214,10 @@ export function DynamicIsland({
     >
       <motion.div
         ref={islandRef}
-        className="relative"
+        className={`relative ${isMobile ? 'cursor-pointer' : ''}`}
         onHoverStart={() => !isMobile && setIsHovered(true)}
         onHoverEnd={() => !isMobile && setIsHovered(false)}
-        onClick={toggleExpanded}
+        onClick={isMobile ? toggleExpanded : undefined}
         animate={{
           opacity,
           scaleX: shouldBeCompact ? 0.95 : 1,
@@ -238,7 +238,7 @@ export function DynamicIsland({
         }}
       >
         <motion.div
-          className="glass-card rounded-full flex items-center gap-2 shadow-2xl backdrop-blur-xl cursor-pointer overflow-hidden relative"
+          className="glass-card rounded-full flex items-center gap-2 shadow-2xl backdrop-blur-xl overflow-hidden relative"
           style={{
             border: '2px solid transparent',
             backgroundImage: `
@@ -649,26 +649,6 @@ export function DynamicIsland({
             )}
           </AnimatePresence>
         </motion.div>
-
-        {/* Subtle hint animation when first shown - solo en móvil */}
-        {isMobile && !isExpanded && !shouldBeCompact && (
-          <motion.div
-            className="absolute -top-8 left-1/2 -translate-x-1/2 text-xs text-muted-foreground bg-background/80 backdrop-blur-sm px-3 py-1 rounded-full whitespace-nowrap pointer-events-none"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ 
-              opacity: [0, 1, 1, 0], 
-              y: [10, 0, 0, -5]
-            }}
-            transition={{ 
-              duration: 3, 
-              times: [0, 0.1, 0.9, 1], 
-              delay: 0.5,
-              ease: [0.32, 0.72, 0, 1]
-            }}
-          >
-            Tap to expand
-          </motion.div>
-        )}
       </motion.div>
     </motion.div>
   )

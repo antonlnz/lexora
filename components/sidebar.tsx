@@ -187,6 +187,12 @@ export function Sidebar() {
                   <div
                     key={source.id}
                     className="flex items-center justify-between p-3 rounded-xl glass hover:bg-accent/30 hover-lift-subtle transition-colors cursor-pointer group"
+                    onClick={() => {
+                      // Redirigir a la página principal con el filtro de fuente
+                      const params = new URLSearchParams()
+                      params.set('source', source.id)
+                      window.location.href = `/?${params.toString()}`
+                    }}
                   >
                     <div className="flex items-center gap-3 flex-1 min-w-0">
                       {source.favicon_url && (

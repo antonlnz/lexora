@@ -105,7 +105,7 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
   const [dragX, setDragX] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
   const [isScrolling, setIsScrolling] = useState(false)
-  const [scrollTimeout, setScrollTimeout] = useState<NodeJS.Timeout | null>(null)
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // Update theme-color meta tag when background color changes
   useEffect(() => {
@@ -198,16 +198,14 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
         setIsScrolling(true)
         
         // Limpiar timeout anterior
-        if (scrollTimeout) {
-          clearTimeout(scrollTimeout)
+        if (scrollTimeoutRef.current) {
+          clearTimeout(scrollTimeoutRef.current)
         }
         
         // Establecer nuevo timeout para detectar cuando deja de scrollear
-        const timeout = setTimeout(() => {
+        scrollTimeoutRef.current = setTimeout(() => {
           setIsScrolling(false)
         }, 1000)
-        
-        setScrollTimeout(timeout)
       }
     }
 
@@ -216,12 +214,12 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
       element.addEventListener("scroll", handleScroll)
       return () => {
         element.removeEventListener("scroll", handleScroll)
-        if (scrollTimeout) {
-          clearTimeout(scrollTimeout)
+        if (scrollTimeoutRef.current) {
+          clearTimeout(scrollTimeoutRef.current)
         }
       }
     }
-  }, [isOpen, scrollTimeout])
+  }, [isOpen])
 
   useEffect(() => {
     if (isOpen) {
@@ -662,15 +660,18 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
               >
                 {/* Article Header */}
                 <header className="mb-8">
+                  {/* Espacio vertical para el botón de cerrar en mobile */}
+                  <div className="h-12 md:hidden" />
+                  
+                  <h1 className="text-4xl font-bold mb-4 text-balance leading-tight">{normalizedContent.title}</h1>
+
                   <div className="flex items-center gap-2 mb-4">
                     <Badge variant="outline" className={typeColors[normalizedContent.type as keyof typeof typeColors] || typeColors.website}>
                       {typeIcons[normalizedContent.type as keyof typeof typeIcons] || typeIcons.website} {normalizedContent.type}
                     </Badge>
                     <span className="text-sm opacity-70">{normalizedContent.source}</span>
                   </div>
-
-                  <h1 className="text-4xl font-bold mb-4 text-balance leading-tight">{normalizedContent.title}</h1>
-
+                  
                   <div className="flex items-center gap-4 text-sm opacity-70 mb-6">
                     <span className="flex items-center gap-1">
                       <User className="h-3 w-3" />
@@ -694,7 +695,6 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
                         ref={videoRef}
                         src={normalizedContent.image}
                         controls
-                        autoPlay
                         muted
                         loop
                         playsInline

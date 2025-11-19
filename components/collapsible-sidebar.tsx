@@ -164,7 +164,7 @@ export function CollapsibleSidebar() {
           variant="ghost"
           size="sm"
           onClick={() => setIsOpen(!isOpen)}
-          className="absolute -right-10 top-4 glass rounded-l-none rounded-r-lg h-12 w-10 p-0"
+          className="absolute -right-10 top-4 bg-transparent hover:glass rounded-l-none rounded-r-lg h-12 w-10 p-0 transition-all duration-300"
         >
           {isOpen ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </Button>

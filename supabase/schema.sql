@@ -75,8 +75,13 @@ create table public.articles (
   author text,
   published_at timestamp with time zone,
   
-  -- Metadata
+  -- Metadata de media
   image_url text,
+  video_url text,
+  media_type text default 'image',
+  video_duration int, -- duración en segundos
+  
+  -- Metadata de lectura
   reading_time int, -- minutos estimados
   word_count int,
   
@@ -84,7 +89,10 @@ create table public.articles (
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
   
   -- Índices
-  unique(source_id, url)
+  unique(source_id, url),
+  
+  -- Constraints
+  constraint check_media_type check (media_type in ('image', 'video', 'audio', 'none'))
 );
 
 -- =============================================
@@ -324,6 +332,7 @@ create index idx_sources_user_id on public.sources(user_id);
 create index idx_sources_source_type on public.sources(source_type);
 create index idx_articles_source_id on public.articles(source_id);
 create index idx_articles_published_at on public.articles(published_at desc);
+create index idx_articles_media_type on public.articles(media_type);
 create index idx_user_articles_user_id on public.user_articles(user_id);
 create index idx_user_articles_article_id on public.user_articles(article_id);
 create index idx_user_articles_is_read on public.user_articles(is_read);

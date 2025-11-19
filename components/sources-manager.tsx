@@ -372,7 +372,7 @@ function SourcesList({ sources, onToggle, onDelete, onSelect, selectedId }: Sour
         return (
           <Card
             key={source.id}
-            className={`glass-card p-4 cursor-pointer transition-all hover:shadow-lg ${
+            className={`glass-card p-4 cursor-pointer transition-all hover:shadow-lg hover-lift-subtle ${
               selectedId === source.id ? "ring-2 ring-primary/50" : ""
             }`}
             onClick={() => onSelect(source)}
@@ -413,8 +413,8 @@ function SourcesList({ sources, onToggle, onDelete, onSelect, selectedId }: Sour
               </div>
 
               <div className="flex items-center gap-2 ml-4">
-                <Switch checked={source.is_active} onCheckedChange={() => onToggle(source.id)} />
-                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                <Switch checked={source.is_active} className="hover-lift-subtle" onCheckedChange={() => onToggle(source.id)} />
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0 hover-lift-subtle">
                   <Settings className="h-4 w-4" />
                 </Button>
                 <Button 
@@ -424,9 +424,9 @@ function SourcesList({ sources, onToggle, onDelete, onSelect, selectedId }: Sour
                     e.stopPropagation()
                     onDelete(source.id)
                   }} 
-                  className="h-8 w-8 p-0"
+                  className="h-8 w-8 p-0 hover-lift-subtle"
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <Trash2 className="h-4 w-4 hover-lift-subtle" />
                 </Button>
               </div>
             </div>
@@ -454,10 +454,29 @@ function SourceSettings({ source, onUpdate }: SourceSettingsProps) {
   }
 
   const SelectedTypeIcon = sourceTypeIcons[localSource.source_type] || Globe
+  const typeColorClass = sourceTypeColors[localSource.source_type] || sourceTypeColors.website
 
   return (
     <Card className="glass-card p-6 sticky top-24">
-      <h3 className="text-lg font-semibold mb-4">Source Settings</h3>
+      <div className="flex items-start justify-between mb-4">
+        <h3 className="text-lg font-semibold">Source Settings</h3>
+        {localSource.favicon_url ? (
+          <div className="p-2 rounded-lg bg-muted shrink-0">
+            <img 
+              src={localSource.favicon_url} 
+              alt="" 
+              className="h-6 w-6"
+              onError={(e) => {
+                e.currentTarget.style.display = "none"
+              }}
+            />
+          </div>
+        ) : (
+          <div className={`p-2 rounded-lg ${typeColorClass} shrink-0`}>
+            <SelectedTypeIcon className="h-6 w-6" />
+          </div>
+        )}
+      </div>
 
       <div className="space-y-4">
         <div>
@@ -549,15 +568,6 @@ function SourceSettings({ source, onUpdate }: SourceSettingsProps) {
               </SelectItem>
             </SelectContent>
           </Select>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <Label htmlFor="active">Active</Label>
-          <Switch
-            id="active"
-            checked={localSource.is_active}
-            onCheckedChange={(checked) => setLocalSource({ ...localSource, is_active: checked })}
-          />
         </div>
 
         <Button onClick={handleSave} className="w-full default">

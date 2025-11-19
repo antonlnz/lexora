@@ -101,6 +101,9 @@ export interface Database {
           author: string | null
           published_at: string | null
           image_url: string | null
+          video_url: string | null
+          media_type: 'image' | 'video' | 'audio' | 'none'
+          video_duration: number | null
           reading_time: number | null
           word_count: number | null
           created_at: string
@@ -116,6 +119,9 @@ export interface Database {
           author?: string | null
           published_at?: string | null
           image_url?: string | null
+          video_url?: string | null
+          media_type?: 'image' | 'video' | 'audio' | 'none'
+          video_duration?: number | null
           reading_time?: number | null
           word_count?: number | null
           created_at?: string
@@ -131,6 +137,9 @@ export interface Database {
           author?: string | null
           published_at?: string | null
           image_url?: string | null
+          video_url?: string | null
+          media_type?: 'image' | 'video' | 'audio' | 'none'
+          video_duration?: number | null
           reading_time?: number | null
           word_count?: number | null
           created_at?: string

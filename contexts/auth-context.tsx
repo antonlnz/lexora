@@ -213,19 +213,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSupabaseUser(null)
         setUser(null)
         setHasCompletedOnboarding(false)
-      } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+      } else if (event === 'SIGNED_IN') {
+        // Solo actualizar en SIGNED_IN (login real)
         if (session?.user) {
           await updateUserState(session.user)
         }
-      } else if (event === 'INITIAL_SESSION') {
-        // Este evento se dispara al inicializar, ya lo manejamos arriba
-        if (session?.user) {
+      } else if (event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+        // Para refresh de tokens, solo actualizar si hay cambios significativos
+        if (session?.user && (!supabaseUser || supabaseUser.id !== session.user.id)) {
           await updateUserState(session.user)
         }
       }
-      
-      // Refresh router para sincronizar con middleware
-      router.refresh()
+      // No manejar INITIAL_SESSION aquí - ya se maneja en initializeAuth
     })
 
     return () => {
@@ -260,9 +259,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else {
         router.push("/")
       }
-      
-      // Refrescar para sincronizar con middleware
-      router.refresh()
     }
   }
 
@@ -284,7 +280,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (data.user) {
       // Redirect to onboarding after signup
       router.push("/onboarding")
-      router.refresh()
     }
   }
 
@@ -300,9 +295,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSupabaseUser(null)
     setHasCompletedOnboarding(false)
     
-    // Navegar y refrescar
+    // Navegar
     router.push("/login")
-    router.refresh()
   }
 
   const completeOnboarding = async () => {

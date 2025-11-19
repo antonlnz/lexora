@@ -1,5 +1,6 @@
 "use client"
 
+import { Suspense } from "react"
 import { Navigation } from "@/components/navigation"
 import { ContentFeed } from "@/components/content-feed"
 import { CollapsibleSidebar } from "@/components/collapsible-sidebar"
@@ -17,7 +18,9 @@ export default function HomePage() {
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="py-8">
               <main className="w-full">
-                <ContentFeed />
+                <Suspense fallback={<div className="flex items-center justify-center py-12">Loading...</div>}>
+                  <ContentFeed />
+                </Suspense>
               </main>
             </div>
           </div>

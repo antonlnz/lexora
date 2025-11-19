@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { Bookmark, BookmarkCheck, Clock, ExternalLink, Play, Share, User } from "lucide-react"
-import Image from "next/image"
 import type { ArticleWithUserData } from "@/types/database"
 import { articleService } from "@/lib/services/article-service"
 
@@ -18,7 +17,6 @@ interface ContentCardProps {
 }
 
 const typeIcons: Record<string, string> = {
-  news: "📰",
   rss: "📰",
   youtube: "🎥",
   twitter: "🐦",
@@ -54,6 +52,26 @@ function getRelativeTime(date: string | null): string {
   if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`
   if (hours < 24) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`
   return `${days} ${days === 1 ? 'day' : 'days'} ago`
+}
+
+// Función auxiliar para formatear duración de video
+function formatVideoDuration(seconds: number): string {
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const secs = seconds % 60
+  
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+  }
+  return `${minutes}:${secs.toString().padStart(2, '0')}`
+}
+
+// Función auxiliar para detectar si una URL es un video
+function isVideoUrl(url: string | null | undefined): boolean {
+  if (!url) return false
+  const videoExtensions = ['.mp4', '.webm', '.ogg', '.mov', '.avi', '.wmv', '.flv', '.mkv', '.m4v']
+  const lowerUrl = url.toLowerCase()
+  return videoExtensions.some(ext => lowerUrl.includes(ext))
 }
 
 export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProps) {
@@ -97,6 +115,19 @@ export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProp
   const sourceType = article.source.source_type
   const relativeTime = getRelativeTime(article.published_at)
   const readTime = article.reading_time ? `${article.reading_time} min read` : undefined
+  
+  // Detectar si es video: por media_type, video_url, o si image_url es un video
+  const hasVideoUrl = !!article.video_url
+  const imageUrlIsVideo = isVideoUrl(article.image_url)
+  const isVideo = article.media_type === 'video' || hasVideoUrl || imageUrlIsVideo || 
+                  sourceType === 'youtube' || sourceType === 'tiktok'
+  
+  const videoDuration = article.video_duration ? formatVideoDuration(article.video_duration) : null
+  
+  // Determinar qué URL usar para cada propósito
+  // Si image_url es un video, usarlo como video y buscar poster alternativo
+  const videoSrc = hasVideoUrl ? article.video_url : (imageUrlIsVideo ? article.image_url : null)
+  const imageSrc = imageUrlIsVideo ? "/placeholder.svg" : (article.image_url || "/placeholder.svg")
 
   if (viewMode === "list") {
     return (
@@ -107,12 +138,44 @@ export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProp
       >
         <div className="flex gap-4">
           <div className="relative w-24 h-24 shrink-0 rounded-lg overflow-hidden">
-            <Image 
-              src={article.image_url || "/placeholder.svg"} 
-              alt={article.title} 
-              fill 
-              className="object-cover" 
-            />
+            {isVideo ? (
+              <>
+                {videoSrc ? (
+                  <video 
+                    src={videoSrc}
+                    poster={imageSrc !== "/placeholder.svg" ? imageSrc : undefined}
+                    className="w-full h-full object-cover"
+                    muted
+                    playsInline
+                    preload="metadata"
+                  />
+                ) : (
+                  // Fallback: usar solo el poster si no hay video_url
+                  <img 
+                    src={imageSrc}
+                    alt={article.title}
+                    className="w-full h-full object-cover"
+                  />
+                )}
+                <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
+                  <div className="bg-white/90 rounded-full p-2 shadow-lg">
+                    <Play className="h-4 w-4 text-black fill-black" />
+                  </div>
+                </div>
+                {videoDuration && (
+                  <div className="absolute bottom-1 right-1 bg-black/80 text-white text-xs px-1.5 py-0.5 rounded">
+                    {videoDuration}
+                  </div>
+                )}
+              </>
+            ) : (
+              // Usar img normal en lugar de Image de Next.js para evitar errores con URLs inesperadas
+              <img 
+                src={imageSrc} 
+                alt={article.title} 
+                className="w-full h-full object-cover"
+              />
+            )}
           </div>
 
           <div className="flex-1 min-w-0">
@@ -186,14 +249,46 @@ export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProp
       className={`glass-card overflow-hidden hover-lift-strong transition-all duration-300 group cursor-pointer ${isRead ? "opacity-60" : ""}`}
       onClick={handleOpenContent}
     >
-      <div className="relative aspect-video overflow-hidden">
-        <Image
-          src={article.image_url || "/placeholder.svg"}
-          alt={article.title}
-          fill
-          className="object-cover group-hover:scale-105 transition-transform duration-300"
-        />
-        {(sourceType === "youtube" || sourceType === "tiktok") && (
+      <div className="relative aspect-video overflow-hidden bg-muted">
+        {isVideo ? (
+          <>
+            {videoSrc ? (
+              <video
+                src={videoSrc}
+                poster={imageSrc !== "/placeholder.svg" ? imageSrc : undefined}
+                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                muted
+                playsInline
+                preload="metadata"
+              />
+            ) : (
+              // Fallback: usar solo el poster si no hay video_url
+              <img
+                src={imageSrc}
+                alt={article.title}
+                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+              />
+            )}
+            <div className="absolute inset-0 flex items-center justify-center bg-linear-to-t from-black/60 via-transparent to-transparent">
+              <div className="bg-white/95 rounded-full p-4 group-hover:bg-white group-hover:scale-110 transition-all duration-300 shadow-xl">
+                <Play className="h-8 w-8 text-black fill-black" />
+              </div>
+            </div>
+            {videoDuration && (
+              <div className="absolute bottom-3 right-3 bg-black/90 text-white text-sm font-medium px-2.5 py-1 rounded backdrop-blur-sm">
+                {videoDuration}
+              </div>
+            )}
+          </>
+        ) : (
+          // Usar img normal en lugar de Image de Next.js para evitar errores con URLs inesperadas
+          <img
+            src={imageSrc}
+            alt={article.title}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+          />
+        )}
+        {(sourceType === "youtube" || sourceType === "tiktok") && !isVideo && (
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="bg-black/50 rounded-full p-3 group-hover:bg-black/70 transition-colors">
               <Play className="h-6 w-6 text-white fill-white" />

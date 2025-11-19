@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useMemo, useEffect } from "react"
+import { useSearchParams, useRouter, usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { ContentCard } from "@/components/content-card"
 import { ContentViewer } from "@/components/content-viewer"
@@ -12,17 +13,22 @@ import { useSubscription } from "@/contexts/subscription-context"
 import { useAuth } from "@/contexts/auth-context"
 import { articleService } from "@/lib/services/article-service"
 import { sourceService } from "@/lib/services/source-service"
-import type { ArticleWithUserData } from "@/types/database"
+import type { ArticleWithUserData, Source } from "@/types/database"
 
 export function ContentFeed() {
   const { isAuthenticated, isLoading: authLoading } = useAuth()
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [displayedItems, setDisplayedItems] = useState(6) // Start with 6 items
   const [isLoadingMore, setIsLoadingMore] = useState(false)
-  const [isLoadingInitial, setIsLoadingInitial] = useState(true)
   const [articles, setArticles] = useState<ArticleWithUserData[]>([])
+  const [sources, setSources] = useState<Source[]>([])
   const [isSyncing, setIsSyncing] = useState(false)
+  const [isSyncingOlder, setIsSyncingOlder] = useState(false)
+  const [syncProgress, setSyncProgress] = useState({ current: 0, total: 0 })
   const itemsPerPage = 6
 
   const [filters, setFilters] = useState<FilterState>({
@@ -38,6 +44,49 @@ export function ContentFeed() {
     readTimeRange: [0, 60],
   })
 
+  // Detectar filtros de fuente desde URL
+  useEffect(() => {
+    const sourceIdsFromUrl = searchParams.getAll('source')
+    if (sourceIdsFromUrl.length > 0) {
+      // Solo actualizar si las fuentes en la URL son diferentes a las del filtro
+      const currentSources = filters.sources.sort().join(',')
+      const urlSources = sourceIdsFromUrl.sort().join(',')
+      if (currentSources !== urlSources) {
+        setFilters(prev => ({
+          ...prev,
+          sources: sourceIdsFromUrl
+        }))
+      }
+    }
+  }, [searchParams])
+
+  // Actualizar URL cuando cambien los filtros de fuente
+  useEffect(() => {
+    const currentSourceParams = searchParams.getAll('source')
+    const currentSources = currentSourceParams.sort().join(',')
+    const filterSources = filters.sources.sort().join(',')
+    
+    // Solo actualizar si hay diferencias
+    if (currentSources !== filterSources) {
+      const params = new URLSearchParams(searchParams.toString())
+      
+      // Eliminar todos los parámetros 'source' existentes
+      params.delete('source')
+      
+      // Agregar todos los filtros de fuente
+      if (filters.sources.length > 0) {
+        filters.sources.forEach(sourceId => {
+          params.append('source', sourceId)
+        })
+        router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+      } else {
+        // Si no hay fuentes en el filtro, quitar todos los parámetros de source
+        const newUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname
+        router.replace(newUrl, { scroll: false })
+      }
+    }
+  }, [filters.sources, pathname, router, searchParams])
+
   const [viewerContent, setViewerContent] = useState<any>(null)
   const [isViewerOpen, setIsViewerOpen] = useState(false)
   const [cardPosition, setCardPosition] = useState<DOMRect | null>(null)
@@ -50,15 +99,58 @@ export function ContentFeed() {
   useEffect(() => {
     if (isAuthenticated && !authLoading) {
       loadArticles()
+      loadSources()
       loadSourceCount()
       // Solo sincronizar feeds si hay fuentes
-      loadSourceCount().then(() => {
-        if (sourceCount > 0) {
-          syncFeeds()
+      loadSourceCount().then(async (count) => {
+        if (count > 0) {
+          await syncFeedsWithProgress()
         }
       })
     }
   }, [isAuthenticated, authLoading])
+
+  const syncFeedsWithProgress = async () => {
+    try {
+      setIsSyncing(true)
+      
+      // Obtener las fuentes primero para saber cuántas hay
+      const userSources = await sourceService.getUserSources(true)
+      setSyncProgress({ current: 0, total: userSources.length })
+      
+      // Sincronizar fuente por fuente y actualizar la lista en tiempo real
+      for (let i = 0; i < userSources.length; i++) {
+        const source = userSources[i]
+        
+        // Actualizar progreso
+        setSyncProgress({ current: i + 1, total: userSources.length })
+        
+        // Sincronizar esta fuente específica
+        try {
+          const response = await fetch('/api/feeds/refresh', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ sourceId: source.id }),
+          })
+          
+          if (response.ok) {
+            // Recargar artículos después de cada fuente para mostrar progreso
+            await loadArticles()
+          }
+        } catch (error) {
+          console.error(`Error syncing source ${source.id}:`, error)
+        }
+      }
+      
+    } catch (error) {
+      console.error('Error in sync process:', error)
+    } finally {
+      setIsSyncing(false)
+      setSyncProgress({ current: 0, total: 0 })
+    }
+  }
 
   const syncFeeds = async () => {
     try {
@@ -86,42 +178,90 @@ export function ContentFeed() {
     }
   }
 
-  const loadSourceCount = async () => {
+  const loadSourceCount = async (): Promise<number> => {
     try {
       const sources = await sourceService.getUserSources(true)
       setSourceCount(sources.length)
+      return sources.length
     } catch (error) {
       console.error('Error loading source count:', error)
+      return 0
+    }
+  }
+
+  const loadSources = async () => {
+    try {
+      const fetchedSources = await sourceService.getUserSources(true)
+      setSources(fetchedSources)
+    } catch (error) {
+      console.error('Error loading sources:', error)
     }
   }
 
   const loadArticles = async () => {
-    setIsLoadingInitial(true)
     try {
-      const fetchedArticles = await articleService.getRecentFeedArticles({
-        limit: 50 // Cargar más artículos inicialmente para filtrado local
+      // Usar getArticlesWithUserData sin filtro de tiempo para cargar todos los artículos
+      const fetchedArticles = await articleService.getArticlesWithUserData({
+        limit: 100 // Cargar más artículos para tener mejor contexto
       })
       setArticles(fetchedArticles)
     } catch (error) {
       console.error('Error loading articles:', error)
-    } finally {
-      setIsLoadingInitial(false)
     }
   }
 
   const handleRefresh = async () => {
     setIsRefreshing(true)
     setDisplayedItems(6)
-    await syncFeeds() // Primero sincronizar feeds
-    await loadArticles() // Luego cargar artículos actualizados
+    await syncFeedsWithProgress() // Usar sincronización progresiva
+    await loadSources()
     await loadSourceCount()
     setIsRefreshing(false)
   }
 
   const handleSourceAdded = async () => {
-    await syncFeeds() // Sincronizar después de agregar una fuente
-    await loadArticles()
+    await syncFeedsWithProgress() // Sincronización progresiva después de agregar una fuente
+    await loadSources()
     await loadSourceCount()
+  }
+
+  const handleSyncOlderEntries = async () => {
+    setIsSyncingOlder(true)
+    try {
+      // Si hay filtro de fuente específico, sincronizar solo esas fuentes
+      const sourceIdsToSync = filters.sources.length > 0 ? filters.sources : []
+      
+      if (sourceIdsToSync.length > 0) {
+        // Sincronizar cada fuente seleccionada
+        for (const sourceId of sourceIdsToSync) {
+          await fetch('/api/feeds/sync-older', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ sourceId }),
+          })
+        }
+      } else {
+        // Sincronizar todas las fuentes
+        await fetch('/api/feeds/sync-older', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({}),
+        })
+      }
+      
+      // Recargar artículos después de sincronizar
+      await loadArticles()
+      // Resetear los items mostrados para que se vea la actualización
+      setDisplayedItems(6)
+    } catch (error) {
+      console.error('Error syncing older entries:', error)
+    } finally {
+      setIsSyncingOlder(false)
+    }
   }
 
   const handleOpenViewer = (content: any, cardElement: HTMLElement) => {
@@ -177,7 +317,8 @@ export function ContentFeed() {
         return false
       }
 
-      if (filters.sources.length > 0 && !filters.sources.includes(article.source.title)) {
+      // Filtrar por fuentes seleccionadas
+      if (filters.sources.length > 0 && !filters.sources.includes(article.source_id)) {
         return false
       }
 
@@ -252,8 +393,12 @@ export function ContentFeed() {
   })
 
   const availableSources = useMemo(() => {
-    return Array.from(new Set(articles.map((article) => article.source.title))).sort()
-  }, [articles])
+    return sources.map(source => ({
+      id: source.id,
+      title: source.title,
+      favicon_url: source.favicon_url
+    }))
+  }, [sources])
 
   const availableTags = useMemo(() => {
     // Tags aún no implementados en BD
@@ -265,19 +410,8 @@ export function ContentFeed() {
     return null
   }
 
-  if (isLoadingInitial) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <div className="flex flex-col items-center gap-4 text-muted-foreground">
-          <Loader2 className="h-6 w-6 animate-spin" />
-          <div className="text-center">
-            <p className="font-medium">Loading your feed...</p>
-            {isSyncing && <p className="text-sm mt-1">Syncing latest articles from your sources...</p>}
-          </div>
-        </div>
-      </div>
-    )
-  }
+  // Mostrar la interfaz completa incluso durante la carga inicial
+  const showContent = true
 
   return (
     <div className="space-y-6">
@@ -285,8 +419,16 @@ export function ContentFeed() {
         <div>
           <h1 className="text-3xl font-playfair font-bold text-balance">Your Content Universe</h1>
           <p className="text-muted-foreground mt-1">
-            {displayedContent.length} of {filteredAndSortedContent.length} items •{" "}
-            {articles.filter((article) => !article.user_article?.is_read).length} unread
+            {filteredAndSortedContent.length > 0 ? (
+              <>
+                {displayedContent.length} of {filteredAndSortedContent.length} items •{" "}
+                {articles.filter((article) => !article.user_article?.is_read).length} unread
+              </>
+            ) : isSyncing ? (
+              <>Syncing your sources...</>
+            ) : (
+              <>No items to display</>
+            )}
           </p>
         </div>
 
@@ -298,9 +440,11 @@ export function ContentFeed() {
             </Button>
           )}
 
-          <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={isRefreshing} className="glass hover-lift-subtle">
-            <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
-            {isRefreshing ? 'Syncing...' : 'Refresh'}
+          <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={isRefreshing || isSyncing} className="glass hover-lift-subtle">
+            <RefreshCw className={`h-4 w-4 mr-2 ${(isRefreshing || isSyncing) ? "animate-spin" : ""}`} />
+            {isSyncing && syncProgress.total > 0 
+              ? `Syncing ${syncProgress.current}/${syncProgress.total}...` 
+              : (isRefreshing ? 'Syncing...' : 'Refresh')}
           </Button>
 
           <div className="flex items-center glass rounded-lg p-1">
@@ -331,17 +475,76 @@ export function ContentFeed() {
         availableTags={availableTags}
       />
 
+      {/* Indicador de sincronización */}
+      {isSyncing && syncProgress.total > 0 && (
+        <div className="glass rounded-lg p-4">
+          <div className="flex items-center gap-3">
+            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <div className="flex-1">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-medium">Syncing your sources...</p>
+                <p className="text-sm text-muted-foreground">
+                  {syncProgress.current} of {syncProgress.total}
+                </p>
+              </div>
+              <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                <div 
+                  className="bg-primary h-full transition-all duration-300 ease-out"
+                  style={{ width: `${(syncProgress.current / syncProgress.total) * 100}%` }}
+                />
+              </div>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground mt-2">
+            New articles will appear automatically as sources are synced
+          </p>
+        </div>
+      )}
+
       {filteredAndSortedContent.length === 0 ? (
         <div className="text-center py-12">
           <div className="text-muted-foreground">
-            <p className="text-lg mb-2">
-              {articles.length === 0 ? "No articles in your feed yet" : "No content matches your filters"}
-            </p>
-            <p className="text-sm">
-              {articles.length === 0 
-                ? "Add some sources to start seeing content from the last 24 hours" 
-                : "Try adjusting your search criteria or clearing some filters"}
-            </p>
+            {isSyncing ? (
+              <>
+                <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-primary" />
+                <p className="text-lg mb-2">Fetching your latest content...</p>
+                <p className="text-sm">
+                  Syncing articles from your sources ({syncProgress.current}/{syncProgress.total})
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-lg mb-2">
+                  {articles.length === 0 ? "No articles in your feed yet" : "No content matches your filters"}
+                </p>
+                <p className="text-sm mb-4">
+                  {articles.length === 0 
+                    ? "Click below to sync older articles from your sources" 
+                    : "Try adjusting your search criteria or clearing some filters"}
+                </p>
+                {/* Mostrar botón de sincronización si no hay artículos o si hay filtro de fuente activo */}
+                {(articles.length === 0 || filters.sources.length > 0) && sourceCount > 0 && (
+                  <div className="mt-6">
+                    <Button 
+                      onClick={handleSyncOlderEntries} 
+                      disabled={isSyncingOlder}
+                      variant="outline"
+                      size="lg"
+                      className="glass hover-lift-subtle"
+                    >
+                      <RefreshCw className={`h-4 w-4 mr-2 ${isSyncingOlder ? "animate-spin" : ""}`} />
+                      {isSyncingOlder ? 'Syncing older entries...' : 'Sync older entries'}
+                    </Button>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      {filters.sources.length > 0 
+                        ? 'Fetch articles older than 24 hours from selected sources'
+                        : 'Fetch articles older than 24 hours from all your sources'
+                      }
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       ) : (

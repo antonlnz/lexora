@@ -16,7 +16,45 @@ export async function POST(request: Request) {
       )
     }
 
-        // Sincronizar todos los feeds del usuario
+    // Obtener sourceId opcional del body
+    let sourceId: string | undefined
+    try {
+      const body = await request.json()
+      sourceId = body.sourceId
+    } catch {
+      // No body o JSON inválido - sincronizar todo
+    }
+
+    // Si se proporciona sourceId, sincronizar solo esa fuente
+    if (sourceId) {
+      // Verificar que la fuente pertenece al usuario
+      const { data: source, error: sourceError } = await supabase
+        .from('sources')
+        .select('*')
+        .eq('id', sourceId)
+        .eq('user_id', user.id)
+        .eq('source_type', 'rss')
+        .eq('is_active', true)
+        .single()
+
+      if (sourceError || !source) {
+        return NextResponse.json(
+          { error: 'Source not found' },
+          { status: 404 }
+        )
+      }
+
+      const result = await rssService.syncFeedArticles(source)
+
+      return NextResponse.json({
+        success: result.success,
+        articlesAdded: result.articlesAdded,
+        articlesUpdated: result.articlesUpdated,
+        error: result.error,
+      })
+    }
+
+    // Sincronizar todos los feeds del usuario
     const result = await rssService.syncUserFeeds(user.id)
 
     return NextResponse.json({

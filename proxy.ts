@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-export async function updateSession(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
     request,
   })
@@ -38,7 +38,7 @@ export async function updateSession(request: NextRequest) {
 
   // Solo loguear errores reales, no "AuthSessionMissingError" que es un estado normal
   if (userError && userError.name !== 'AuthSessionMissingError') {
-    console.error('Error getting user in middleware:', userError)
+    console.error('Error getting user in proxy:', userError)
   }
 
   const pathname = request.nextUrl.pathname
@@ -84,4 +84,17 @@ export async function updateSession(request: NextRequest) {
   // of sync and terminate the user's session prematurely!
 
   return supabaseResponse
+}
+
+export const config = {
+  matcher: [
+    /*
+     * Match all request paths except for the ones starting with:
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     * - public folder
+     */
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+  ],
 }

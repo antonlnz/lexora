@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/contexts/auth-context"
 import { useRouter, usePathname } from "next/navigation"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { Loader2 } from "lucide-react"
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -10,12 +10,15 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
   const [showTimeout, setShowTimeout] = useState(false)
+  const hasRedirected = useRef(false)
 
   const publicPaths = ['/login', '/signup', '/forgot-password', '/reset-password', '/auth']
   const isPublicPath = publicPaths.some(path => pathname.startsWith(path))
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated && !isPublicPath) {
+    // Solo redirigir una vez y cuando no esté cargando
+    if (!isLoading && !isAuthenticated && !isPublicPath && !hasRedirected.current) {
+      hasRedirected.current = true
       router.push('/login')
     }
   }, [isAuthenticated, isLoading, router, isPublicPath, pathname])
