@@ -30,5 +30,3 @@ next-env.d.ts
 # markdown files except README
 *.md
 !README.md
-
-supabase/
