@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { contentService } from '@/lib/services/content-service'
 import { SOURCE_TYPE_TO_CONTENT_TYPE } from '@/types/content'
+import type { SourceType } from '@/types/database'
 import { getCORSHeaders } from '@/lib/utils/security'
 
 // UUID v4 validation regex
@@ -83,8 +84,13 @@ export async function POST(request: Request) {
       .single()
 
     if (rssArticle) {
-      const sourceType = (rssArticle.source as any)?.source_type
-      contentType = SOURCE_TYPE_TO_CONTENT_TYPE[sourceType] || 'rss'
+      const sourceTypeRaw = (rssArticle.source as any)?.source_type
+      // Guard: solo indexar cuando sourceTypeRaw es una clave válida
+      if (typeof sourceTypeRaw === 'string' && sourceTypeRaw in SOURCE_TYPE_TO_CONTENT_TYPE) {
+        contentType = SOURCE_TYPE_TO_CONTENT_TYPE[sourceTypeRaw as SourceType] ?? 'rss'
+      } else {
+        contentType = 'rss'
+      }
     } else {
       // Probar con otros tipos
       const { data: youtubeArticle } = await supabase
