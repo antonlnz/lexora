@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { AmbientBackground } from "@/components/ambient-background"
+import { VideoAmbientBackground } from "@/components/video-ambient-background"
 import { DynamicIsland } from "@/components/dynamic-island"
 import {
   X,
@@ -22,9 +23,9 @@ import {
   Download,
   ExternalLink,
 } from "lucide-react"
-import Image from "next/image"
 import type { ArticleWithUserData } from "@/types/database"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { sanitizeHTML } from "@/lib/utils/security"
 
 interface ContentViewerProps {
   content: ArticleWithUserData | null
@@ -59,6 +60,49 @@ const typeColors = {
   website: "bg-gray-500/10 text-gray-600 border-gray-500/20",
 }
 
+// Función para detectar si una URL es un video
+function isVideoUrl(url: string | null | undefined): boolean {
+  if (!url) return false
+  const videoExtensions = ['.mp4', '.webm', '.ogg', '.mov', '.avi', '.wmv', '.flv', '.mkv', '.m4v']
+  const lowerUrl = url.toLowerCase()
+  return videoExtensions.some(ext => lowerUrl.includes(ext))
+}
+
+// Función para obtener el thumbnail de un video de YouTube
+function getYouTubeThumbnail(url: string | null | undefined): string | null {
+  if (!url) return null
+  
+  // Extraer el ID del video de YouTube
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\?\/]+)/,
+    /youtube\.com\/shorts\/([^&\?\/]+)/
+  ]
+  
+  for (const pattern of patterns) {
+    const match = url.match(pattern)
+    if (match && match[1]) {
+      // Usar maxresdefault para mejor calidad, fallback a hqdefault
+      return `https://img.youtube.com/vi/${match[1]}/maxresdefault.jpg`
+    }
+  }
+  
+  return null
+}
+
+// Función para extraer el ID de video de YouTube
+function getYouTubeVideoId(url: string | null | undefined): string | null {
+  if (!url) return null
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\?\/]+)/,
+    /youtube\.com\/shorts\/([^&\?\/]+)/
+  ]
+  for (const pattern of patterns) {
+    const match = url.match(pattern)
+    if (match && match[1]) return match[1]
+  }
+  return null
+}
+
 // Helper function to normalize article data from database
 function normalizeContent(article: ArticleWithUserData) {
   return {
@@ -72,15 +116,24 @@ function normalizeContent(article: ArticleWithUserData) {
     publishedAt: article.published_at ? new Date(article.published_at).toLocaleDateString() : 'Unknown',
     url: article.url,
     readTime: article.reading_time ? `${article.reading_time} min read` : undefined,
-    image: article.image_url || '/placeholder.svg',
+    // Usar las nuevas columnas featured_media primero, fallback a image_url (legacy)
+    image: article.featured_media_type === 'image' 
+      ? (article.featured_media_url || article.image_url || '/placeholder.svg')
+      : (article.featured_thumbnail_url || article.image_url || '/placeholder.svg'),
     isRead: article.user_article?.is_read || false,
     isSaved: article.user_article?.is_favorite || false,
+    // Datos de video: usar las nuevas columnas
+    videoUrl: article.featured_media_type === 'video' ? article.featured_media_url : null,
+    videoDuration: article.featured_media_duration,
+    mediaType: article.featured_media_type,
   }
 }
 
 export function ContentViewer({ content, isOpen, onClose, cardPosition, onNavigateNext, onNavigatePrevious, hasNext = false, hasPrevious = false }: ContentViewerProps) {
   const contentRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const floatingVideoRef = useRef<HTMLVideoElement>(null)
+  const videoContainerRef = useRef<HTMLDivElement>(null)
   const [isSaved, setIsSaved] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
@@ -88,6 +141,12 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
   const isMobile = useIsMobile()
   const [isSelectingText, setIsSelectingText] = useState(false)
   const [isInteractingWithVideo, setIsInteractingWithVideo] = useState(false)
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false)
+  const [shouldFloatVideo, setShouldFloatVideo] = useState(false)
+  const [showPlayButton, setShowPlayButton] = useState(true)
+  const [currentVideoTime, setCurrentVideoTime] = useState(0)
+  const [mediaAspectRatio, setMediaAspectRatio] = useState<number | null>(null)
+  const [isMediaVertical, setIsMediaVertical] = useState(false)
 
   // Normalize article data from database
   const normalizedContent = content ? normalizeContent(content) : null
@@ -182,6 +241,9 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
   useEffect(() => {
     if (normalizedContent) {
       setIsSaved(normalizedContent.isSaved)
+      // Resetear estado de orientación cuando cambia el contenido
+      setMediaAspectRatio(null)
+      setIsMediaVertical(false)
     }
   }, [normalizedContent])
 
@@ -206,6 +268,25 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
         scrollTimeoutRef.current = setTimeout(() => {
           setIsScrolling(false)
         }, 1000)
+
+        // Lógica para video flotante
+        if (videoContainerRef.current && isVideoPlaying) {
+          const videoContainer = videoContainerRef.current
+          const rect = videoContainer.getBoundingClientRect()
+          const containerTop = contentRef.current.getBoundingClientRect().top
+          
+          // Si menos de la mitad del video es visible desde arriba
+          const videoVisibleFromTop = rect.top - containerTop
+          const videoHeight = rect.height
+          const halfVideoHeight = videoHeight / 2
+          
+          // Activar modo flotante si el video está scrolleado más de la mitad hacia arriba
+          if (videoVisibleFromTop < -halfVideoHeight) {
+            setShouldFloatVideo(true)
+          } else {
+            setShouldFloatVideo(false)
+          }
+        }
       }
     }
 
@@ -219,7 +300,7 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
         }
       }
     }
-  }, [isOpen])
+  }, [isOpen, isVideoPlaying])
 
   useEffect(() => {
     if (isOpen) {
@@ -231,6 +312,33 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
       document.body.style.overflow = ""
     }
   }, [isOpen])
+
+  // Sincronizar videos cuando cambia el modo flotante
+  useEffect(() => {
+    if (!videoRef.current) return
+
+    if (shouldFloatVideo) {
+      // Guardar el tiempo actual y pausar el video original
+      setCurrentVideoTime(videoRef.current.currentTime)
+      videoRef.current.pause()
+      
+      // Cuando el video flotante esté listo, sincronizar el tiempo
+      if (floatingVideoRef.current) {
+        floatingVideoRef.current.currentTime = videoRef.current.currentTime
+        if (isVideoPlaying) {
+          floatingVideoRef.current.play()
+        }
+      }
+    } else {
+      // Volver al video original
+      if (floatingVideoRef.current && videoRef.current) {
+        videoRef.current.currentTime = floatingVideoRef.current.currentTime
+        if (isVideoPlaying) {
+          videoRef.current.play()
+        }
+      }
+    }
+  }, [shouldFloatVideo, isVideoPlaying])
 
   // Detectar selección de texto
   useEffect(() => {
@@ -328,15 +436,27 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
   }
 
   const handleShare = async () => {
-    if (navigator.share && content && normalizedContent) {
-      try {
-        await navigator.share({
-          title: normalizedContent.title,
-          text: normalizedContent.excerpt,
-          url: window.location.href,
-        })
-      } catch (err) {
-        console.log("Error sharing:", err)
+    if (content && normalizedContent) {
+      const shareUrl = `${window.location.origin}/read/${normalizedContent.id}`
+      
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: normalizedContent.title,
+            text: normalizedContent.excerpt,
+            url: shareUrl,
+          })
+        } catch (err) {
+          console.log("Error sharing:", err)
+        }
+      } else {
+        // Fallback: copy to clipboard
+        try {
+          await navigator.clipboard.writeText(shareUrl)
+          // You could show a toast here
+        } catch (err) {
+          console.error('Error copying to clipboard:', err)
+        }
       }
     }
   }
@@ -362,9 +482,50 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
     setIsMuted(!isMuted)
   }
 
+  const handleVideoPlay = () => {
+    setIsVideoPlaying(true)
+    setShowPlayButton(false)
+  }
+
+  const handleVideoPause = () => {
+    setIsVideoPlaying(false)
+  }
+
+  const handleVideoClick = () => {
+    if (videoRef.current) {
+      if (isVideoPlaying) {
+        videoRef.current.pause()
+      } else {
+        videoRef.current.play()
+      }
+    }
+  }
+
   //if (!content) return null
 
-  const isMultimedia = normalizedContent?.type === "youtube" || normalizedContent?.type === "tiktok" || normalizedContent?.type === "instagram"
+  const isMultimedia = normalizedContent?.type === "youtube_channel" || 
+                       normalizedContent?.type === "youtube_video" || 
+                       normalizedContent?.type === "tiktok" || 
+                       normalizedContent?.type === "instagram"
+  
+  // Determinar si el contenido tiene video
+  const hasVideo = normalizedContent?.videoUrl || 
+                   normalizedContent?.mediaType === 'video' || 
+                   isVideoUrl(normalizedContent?.image)
+  
+  // Obtener el thumbnail apropiado para el video
+  let videoThumbnail: string | null = null
+  if (normalizedContent?.type === 'youtube_channel' || normalizedContent?.type === 'youtube_video') {
+    videoThumbnail = getYouTubeThumbnail(content?.url) || getYouTubeThumbnail(normalizedContent?.videoUrl)
+  }
+  // Si no es YouTube o no tiene thumbnail de YT, usar image si no es un video
+  if (!videoThumbnail && normalizedContent?.image && !isVideoUrl(normalizedContent.image)) {
+    videoThumbnail = normalizedContent.image
+  }
+  
+  // URL del video para reproducir
+  const videoPlayUrl = normalizedContent?.videoUrl || 
+                       (isVideoUrl(normalizedContent?.image) ? normalizedContent?.image : null)
   
   // Use real content from database, fallback to excerpt if no content
   const contentHtml = content && normalizedContent 
@@ -537,7 +698,9 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
             }}
             onDragEnd={handleDragEnd}
             style={{
-              backgroundColor: isDarkMode ? "#0a0a0a" : backgroundColor,
+              backgroundColor: hasVideo && isVideoPlaying 
+                ? (isDarkMode ? "rgba(10, 10, 10, 0.7)" : "rgba(255, 255, 255, 0.7)")
+                : (isDarkMode ? "#0a0a0a" : backgroundColor),
               transformOrigin: cardPosition
                 ? `${cardPosition.left + cardPosition.width / 2}px ${cardPosition.top + cardPosition.height / 2}px`
                 : "center center",
@@ -545,7 +708,17 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
             }}
           >
             {/* Ambient background for multimedia content */}
-            {isMultimedia && <AmbientBackground imageUrl={normalizedContent.image} isActive={isPlaying} intensity={0.3} />}
+            { /* isMultimedia && <AmbientBackground imageUrl={normalizedContent.image} isActive={isPlaying} intensity={0.3} /> */}
+            {hasVideo && isVideoPlaying && videoRef.current ? (
+              <VideoAmbientBackground 
+                videoElement={videoRef.current} 
+                isPlaying={isVideoPlaying} 
+                intensity={0.6}
+                updateInterval={200}
+              />
+            ) : isMultimedia ? (
+              <AmbientBackground imageUrl={normalizedContent.image} isActive={isPlaying} intensity={0.3} />
+            ) : null}
 
             {/* Close Button - Always visible in top left corner */}
             <motion.button
@@ -627,6 +800,7 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
                   setLineHeight={setLineHeight}
                   maxWidth={maxWidth}
                   setMaxWidth={setMaxWidth}
+                  shareUrl={normalizedContent ? `${window.location.origin}/read/${normalizedContent.id}` : undefined}
                 />
               )}
             </AnimatePresence>
@@ -666,52 +840,127 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
                   <h1 className="text-4xl font-bold mb-4 text-balance leading-tight">{normalizedContent.title}</h1>
 
                   <div className="flex items-center gap-2 mb-4">
-                    <Badge variant="outline" className={typeColors[normalizedContent.type as keyof typeof typeColors] || typeColors.website}>
-                      {typeIcons[normalizedContent.type as keyof typeof typeIcons] || typeIcons.website} {normalizedContent.type}
-                    </Badge>
-                    <span className="text-sm opacity-70">{normalizedContent.source}</span>
+                  <Badge variant="outline" className={typeColors[normalizedContent.type as keyof typeof typeColors] || typeColors.website}>
+                    {typeIcons[normalizedContent.type as keyof typeof typeIcons] || typeIcons.website} {normalizedContent.type}
+                  </Badge>
+                  <span className="text-sm opacity-70">{normalizedContent.source}</span>
                   </div>
                   
                   <div className="flex items-center gap-4 text-sm opacity-70 mb-6">
-                    <span className="flex items-center gap-1">
-                      <User className="h-3 w-3" />
-                      {normalizedContent.author}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Clock className="h-3 w-3" />
-                      {normalizedContent.publishedAt}
-                    </span>
-                    {normalizedContent.readTime && <span>{normalizedContent.readTime}</span>}
+                  <span className="flex items-center gap-1">
+                    <User className="h-3 w-3" />
+                    {normalizedContent.author}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    {normalizedContent.publishedAt}
+                  </span>
+                  {normalizedContent.readTime && <span>{normalizedContent.readTime}</span>}
                   </div>
 
                   {/* Featured Image or Video */}
-                  <div className="relative aspect-video rounded-lg overflow-hidden mb-8">
-                    {normalizedContent.image && 
-                     (normalizedContent.image.endsWith('.mp4') || 
-                      normalizedContent.image.endsWith('.webm') || 
-                      normalizedContent.image.endsWith('.ogg') ||
-                      normalizedContent.image.includes('video')) ? (
-                      <video
-                        ref={videoRef}
-                        src={normalizedContent.image}
-                        controls
-                        muted
-                        loop
-                        playsInline
-                        className="w-full h-full object-cover"
-                        preload="metadata"
-                      >
-                        Tu navegador no soporta la reproducción de videos.
-                      </video>
-                    ) : (
-                      <Image
-                        src={normalizedContent.image || "/placeholder.svg"}
-                        alt={normalizedContent.title}
-                        fill
-                        className="object-cover"
-                        priority
+                  <div 
+                    ref={videoContainerRef}
+                    className={`relative rounded-lg overflow-hidden mb-8 bg-muted ${
+                      mediaAspectRatio !== null
+                        ? isMediaVertical
+                          ? 'aspect-[9/16] max-h-[80vh]'
+                          : 'aspect-video'
+                        : 'aspect-video'
+                    }`}
+                    style={{
+                      ...(mediaAspectRatio !== null && isMediaVertical
+                        ? { maxWidth: '100%', width: 'auto', margin: '0 auto' }
+                        : {})
+                    }}
+                  >
+                  {(() => {
+                    const youtubeId = getYouTubeVideoId(normalizedContent.videoUrl)
+                    
+                    if (youtubeId) {
+                    return (
+                      <iframe
+                      src={`https://www.youtube-nocookie.com/embed/${youtubeId}?rel=0&modestbranding=1`}
+                      title={normalizedContent.title}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                      className="absolute inset-0 w-full h-full"
                       />
-                    )}
+                    )
+                    } else if (hasVideo && videoPlayUrl) {
+                    return (
+                      <div className="relative w-full h-full group">
+                        {/* Thumbnail como fondo */}
+                        {videoThumbnail && (
+                          <img
+                            src={videoThumbnail}
+                            alt={normalizedContent.title}
+                            className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${isVideoPlaying ? 'opacity-0' : 'opacity-100'}`}
+                            onLoad={(e) => {
+                              const img = e.currentTarget
+                              const aspectRatio = img.naturalWidth / img.naturalHeight
+                              setMediaAspectRatio(aspectRatio)
+                              setIsMediaVertical(aspectRatio < 1)
+                            }}
+                          />
+                        )}
+                        
+                        {/* Botón de Play antes de reproducir */}
+                        {showPlayButton && (
+                          <button
+                            onClick={() => videoRef.current?.play()}
+                            className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[2px] transition-all duration-300 hover:bg-black/40 z-10"
+                          >
+                            <div className="bg-white/95 rounded-full p-6 shadow-2xl transform transition-transform hover:scale-110">
+                              <Play className="h-12 w-12 text-black fill-black" />
+                            </div>
+                          </button>
+                        )}
+
+                        {/* Video */}
+                        <video
+                          ref={videoRef}
+                          src={videoPlayUrl}
+                          poster={videoThumbnail || undefined}
+                          controls
+                          muted={isMuted}
+                          loop
+                          playsInline
+                          className="relative w-full h-full object-contain"
+                          preload="metadata"
+                          onPlay={handleVideoPlay}
+                          onPause={handleVideoPause}
+                          onLoadedMetadata={(e) => {
+                            const video = e.currentTarget
+                            // Detectar orientación del video
+                            const aspectRatio = video.videoWidth / video.videoHeight
+                            setMediaAspectRatio(aspectRatio)
+                            setIsMediaVertical(aspectRatio < 1)
+                            if (!videoThumbnail) {
+                              video.currentTime = 0.1
+                            }
+                          }}
+                        >
+                          Tu navegador no soporta la reproducción de videos.
+                        </video>
+                      </div>
+                    )
+                    } else {
+                    return (
+                      <img
+                      src={videoThumbnail || normalizedContent.image || "/placeholder.svg"}
+                      alt={normalizedContent.title}
+                      className="absolute inset-0 w-full h-full object-contain"
+                      onLoad={(e) => {
+                        const img = e.currentTarget
+                        const aspectRatio = img.naturalWidth / img.naturalHeight
+                        setMediaAspectRatio(aspectRatio)
+                        setIsMediaVertical(aspectRatio < 1)
+                      }}
+                      />
+                    )
+                    }
+                  })()}
                   </div>
                 </header>
 
@@ -725,10 +974,85 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
                     fontSize: `${fontSize}px`,
                     lineHeight: lineHeight,
                   }}
-                  dangerouslySetInnerHTML={{ __html: contentHtml }}
+                  dangerouslySetInnerHTML={{ __html: sanitizeHTML(contentHtml) }}
                 />
               </article>
             </motion.div>
+
+            {/* Video Flotante (Picture-in-Picture Manual) */}
+            <AnimatePresence>
+              {shouldFloatVideo && hasVideo && videoPlayUrl && !getYouTubeVideoId(normalizedContent.videoUrl) && (
+                <motion.div
+                  initial={{ opacity: 0, y: -20, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -20, scale: 0.9 }}
+                  transition={{ duration: 0.3, ease: [0.32, 0.72, 0, 1] }}
+                  className="fixed top-20 right-4 z-40 rounded-lg overflow-hidden shadow-2xl bg-black"
+                  style={{
+                    width: isMobile ? 'calc(100vw - 2rem)' : '400px',
+                    aspectRatio: '16/9',
+                  }}
+                >
+                  {/* Video clonado para el modo flotante */}
+                  <video
+                    ref={floatingVideoRef}
+                    src={videoPlayUrl}
+                    controls
+                    muted={isMuted}
+                    autoPlay={isVideoPlaying}
+                    loop
+                    playsInline
+                    className="w-full h-full object-cover"
+                    onLoadedMetadata={(e) => {
+                      // Sincronizar tiempo cuando se carga
+                      e.currentTarget.currentTime = currentVideoTime
+                    }}
+                    onPause={() => {
+                      // Sincronizar estado de pausa
+                      if (videoRef.current) {
+                        videoRef.current.pause()
+                      }
+                      setIsVideoPlaying(false)
+                    }}
+                    onPlay={() => {
+                      setIsVideoPlaying(true)
+                    }}
+                    onTimeUpdate={(e) => {
+                      // Actualizar el tiempo guardado
+                      setCurrentVideoTime(e.currentTarget.currentTime)
+                    }}
+                  />
+                  
+                  {/* Botón para cerrar el video flotante y volver al original */}
+                  <button
+                    onClick={() => {
+                      // Guardar el tiempo actual del video flotante
+                      if (floatingVideoRef.current) {
+                        setCurrentVideoTime(floatingVideoRef.current.currentTime)
+                      }
+                      setShouldFloatVideo(false)
+                      // Scroll de vuelta al video original
+                      if (videoContainerRef.current && contentRef.current) {
+                        const containerTop = contentRef.current.scrollTop
+                        const videoTop = videoContainerRef.current.offsetTop
+                        contentRef.current.scrollTo({
+                          top: videoTop - 100,
+                          behavior: 'smooth'
+                        })
+                      }
+                    }}
+                    className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 backdrop-blur-sm flex items-center justify-center hover:bg-black/80 transition-colors z-10"
+                  >
+                    <X className="h-4 w-4 text-white" />
+                  </button>
+
+                  {/* Indicador de que es video flotante */}
+                  <div className="absolute bottom-2 left-2 px-2 py-1 rounded bg-black/60 backdrop-blur-sm text-white text-xs font-medium">
+                    Modo flotante
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
         </>
       )}

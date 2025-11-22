@@ -2,10 +2,13 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Upload, FileText, CheckCircle, AlertCircle } from "lucide-react"
+import { useSubscription } from "@/contexts/subscription-context"
+import { sourceService } from "@/lib/services/source-service"
+import { toast } from "sonner"
 
 interface ImportOPMLDialogProps {
   open: boolean
@@ -28,10 +31,31 @@ interface Source {
 }
 
 export function ImportOPMLDialog({ open, onOpenChange, onImport }: ImportOPMLDialogProps) {
+  const { canAddSource, getSourceLimit, currentPlan } = useSubscription()
   const [isDragging, setIsDragging] = useState(false)
   const [file, setFile] = useState<File | null>(null)
   const [parsedSources, setParsedSources] = useState<Omit<Source, "id">[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [userSourcesCount, setUserSourcesCount] = useState(0)
+  const [isLoadingSources, setIsLoadingSources] = useState(false)
+  const [isImporting, setIsImporting] = useState(false)
+
+  // Cargar el número actual de fuentes cuando se abre el diálogo
+  useEffect(() => {
+    if (open) {
+      setIsLoadingSources(true)
+      sourceService.getUserSources()
+        .then(sources => {
+          setUserSourcesCount(sources.length)
+        })
+        .catch(error => {
+          console.error("Error loading sources count:", error)
+        })
+        .finally(() => {
+          setIsLoadingSources(false)
+        })
+    }
+  }, [open])
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
@@ -104,14 +128,36 @@ export function ImportOPMLDialog({ open, onOpenChange, onImport }: ImportOPMLDia
     }
   }
 
-  const handleImport = () => {
-    // TODO: Aquí deberíamos procesar y guardar las fuentes en Supabase
-    // Por ahora solo refrescamos la lista
-    onImport()
-    setFile(null)
-    setParsedSources([])
-    setError(null)
-    onOpenChange(false)
+  const handleImport = async () => {
+    if (parsedSources.length === 0) return
+
+    const sourceLimit = getSourceLimit()
+    const newCount = userSourcesCount + parsedSources.length
+    
+    // Verificar límite
+    if (newCount > sourceLimit) {
+      const maxAllowed = sourceLimit - userSourcesCount
+      toast.error("Límite de fuentes alcanzado", {
+        description: `No puedes importar ${parsedSources.length} fuentes. Solo puedes añadir ${maxAllowed} más fuente(s) con tu plan ${currentPlan}.`,
+      })
+      return
+    }
+
+    setIsImporting(true)
+    try {
+      // TODO: Aquí deberíamos procesar y guardar las fuentes en Supabase
+      // Por ahora solo refrescamos la lista
+      await onImport()
+      setFile(null)
+      setParsedSources([])
+      setError(null)
+      onOpenChange(false)
+      toast.success(`${parsedSources.length} fuente(s) importada(s)`)
+    } catch (error) {
+      toast.error("Error al importar fuentes")
+    } finally {
+      setIsImporting(false)
+    }
   }
 
   return (
@@ -128,6 +174,40 @@ export function ImportOPMLDialog({ open, onOpenChange, onImport }: ImportOPMLDia
         </DialogHeader>
 
         <div className="space-y-6">
+          {/* Advertencia de límite */}
+          {!isLoadingSources && parsedSources.length > 0 && (() => {
+            const sourceLimit = getSourceLimit()
+            const futureCount = userSourcesCount + parsedSources.length
+            const willExceedLimit = futureCount > sourceLimit
+            const isNearLimit = userSourcesCount >= sourceLimit * 0.8 && !willExceedLimit
+            
+            if (willExceedLimit || isNearLimit) {
+              return (
+                <div className={`glass-card p-4 rounded-lg border-2 ${
+                  willExceedLimit ? 'border-red-500/50 bg-red-500/10' : 'border-amber-500/50 bg-amber-500/10'
+                }`}>
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className={`h-5 w-5 shrink-0 mt-0.5 ${
+                      willExceedLimit ? 'text-red-600' : 'text-amber-600'
+                    }`} />
+                    <div className="flex-1">
+                      <h3 className="font-semibold mb-1">
+                        {willExceedLimit ? 'Will Exceed Limit' : 'Near Source Limit'}
+                      </h3>
+                      <p className="text-sm text-muted-foreground">
+                        {willExceedLimit 
+                          ? `Importing ${parsedSources.length} source(s) will exceed your limit of ${sourceLimit} sources for the ${currentPlan} plan. You can only add ${sourceLimit - userSourcesCount} more.`
+                          : `You're using ${userSourcesCount} of ${sourceLimit} sources. Importing will add ${parsedSources.length} more.`
+                        }
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )
+            }
+            return null
+          })()}
+
           {!file && (
             <div
               onDragOver={handleDragOver}
@@ -151,7 +231,7 @@ export function ImportOPMLDialog({ open, onOpenChange, onImport }: ImportOPMLDia
 
           {error && (
             <div className="glass-card p-4 rounded-lg border-red-500/50 flex items-start gap-3">
-              <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+              <AlertCircle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
               <div>
                 <h4 className="font-semibold text-red-600 mb-1">Import Error</h4>
                 <p className="text-sm text-muted-foreground">{error}</p>
@@ -162,7 +242,7 @@ export function ImportOPMLDialog({ open, onOpenChange, onImport }: ImportOPMLDia
           {parsedSources.length > 0 && (
             <div className="glass-card p-4 rounded-lg border-green-500/50">
               <div className="flex items-start gap-3 mb-4">
-                <CheckCircle className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+                <CheckCircle className="h-5 w-5 text-green-600 shrink-0 mt-0.5" />
                 <div>
                   <h4 className="font-semibold text-green-600 mb-1">Ready to Import</h4>
                   <p className="text-sm text-muted-foreground">
@@ -196,11 +276,23 @@ export function ImportOPMLDialog({ open, onOpenChange, onImport }: ImportOPMLDia
               onOpenChange(false)
             }}
             className="glass bg-transparent"
+            disabled={isImporting}
           >
             Cancel
           </Button>
-          <Button onClick={handleImport} disabled={parsedSources.length === 0} className="glass">
-            Import {parsedSources.length} Source{parsedSources.length !== 1 ? "s" : ""}
+          <Button 
+            onClick={handleImport} 
+            disabled={
+              parsedSources.length === 0 || 
+              isImporting ||
+              (userSourcesCount + parsedSources.length) > getSourceLimit()
+            } 
+            className="glass"
+          >
+            {isImporting 
+              ? "Importing..." 
+              : `Import ${parsedSources.length} Source${parsedSources.length !== 1 ? "s" : ""}`
+            }
           </Button>
         </div>
       </DialogContent>

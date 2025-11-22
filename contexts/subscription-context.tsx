@@ -20,7 +20,7 @@ export const subscriptionPlans: SubscriptionPlan[] = [
     name: "Free",
     price: 0,
     interval: "month",
-    maxSources: 15,
+    maxSources: 4,
     features: [
       "Up to 15 content sources",
       "Basic content filtering",
@@ -30,11 +30,11 @@ export const subscriptionPlans: SubscriptionPlan[] = [
     ],
   },
   {
-    id: "basic",
-    name: "Basic",
-    price: 3.99,
+    id: "pro",
+    name: "Pro",
+    price: 2.99,
     interval: "month",
-    maxSources: 100,
+    maxSources: 1000,
     features: [
       "Up to 100 content sources",
       "Advanced filtering & search",
@@ -45,22 +45,22 @@ export const subscriptionPlans: SubscriptionPlan[] = [
     ],
     popular: true,
   },
-  {
-    id: "pro",
-    name: "Professional",
-    price: 5.99,
-    interval: "month",
-    maxSources: 1000,
-    features: [
-      "Up to 1000 content sources",
-      "AI-powered recommendations",
-      "Team collaboration features",
-      "Advanced analytics",
-      "Priority support",
-      "Custom integrations",
-      "Early access to new features",
-    ],
-  },
+  // {
+  //   id: "pro",
+  //   name: "Professional",
+  //   price: 5.99,
+  //   interval: "month",
+  //   maxSources: 1000,
+  //   features: [
+  //     "Up to 1000 content sources",
+  //     "AI-powered recommendations",
+  //     "Team collaboration features",
+  //     "Advanced analytics",
+  //     "Priority support",
+  //     "Custom integrations",
+  //     "Early access to new features",
+  //   ],
+  //   },
 ]
 
 interface SubscriptionContextType {

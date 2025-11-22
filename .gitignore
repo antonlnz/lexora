@@ -17,8 +17,14 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files
-.env*
+# env files (CRÍTICO: excluir archivos con datos sensibles)
+.env
+.env*.local
+.env.development.local
+.env.test.local
+.env.production.local
+# Permitir .env.example en el repo
+!.env.example
 
 # vercel
 .vercel
@@ -27,6 +33,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# markdown files except README
+# Archivos de documentación temporal (permitir .md importantes)
+# Los archivos .md del proyecto SÍ deben estar en el repo
 *.md
 !README.md

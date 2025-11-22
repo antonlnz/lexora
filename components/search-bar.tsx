@@ -172,10 +172,14 @@ export function SearchBar({ onClose }: SearchBarProps) {
                 >
                   <div className="flex gap-3">
                     {/* Imagen */}
-                    {article.image_url ? (
+                    {(article.featured_media_url || article.featured_thumbnail_url || article.image_url) ? (
                       <div className="relative w-16 h-16 rounded-md overflow-hidden shrink-0 bg-muted">
                         <Image
-                          src={article.image_url}
+                          src={
+                            article.featured_media_type === 'image' 
+                              ? (article.featured_media_url || article.image_url || '/placeholder.svg')
+                              : (article.featured_thumbnail_url || article.image_url || '/placeholder.svg')
+                          }
                           alt={article.title}
                           fill
                           className="object-cover"

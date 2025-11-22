@@ -32,11 +32,11 @@ import { useState, useEffect, useRef } from "react"
 
 interface DynamicIslandProps {
   onClose: () => void
-  isSaved: boolean
-  onSave: () => void
+  isSaved?: boolean
+  onSave?: () => void
   onDownload: () => void
   onShare: () => void
-  onOpenInNewTab: () => void
+  onOpenInNewTab?: () => void
   onOpenOriginal: () => void
   isMultimedia?: boolean
   isPlaying?: boolean
@@ -60,6 +60,9 @@ interface DynamicIslandProps {
   setLineHeight?: (height: number) => void
   maxWidth?: number
   setMaxWidth?: (width: number) => void
+  // Optional props for public pages
+  hideCloseButton?: boolean
+  shareUrl?: string
 }
 
 const backgroundPresets = [
@@ -80,7 +83,7 @@ const textColorPresets = [
 
 export function DynamicIsland({
   onClose,
-  isSaved,
+  isSaved = false,
   onSave,
   onDownload,
   onShare,
@@ -108,6 +111,9 @@ export function DynamicIsland({
   setLineHeight,
   maxWidth = 800,
   setMaxWidth,
+  // Optional props
+  hideCloseButton = false,
+  shareUrl,
 }: DynamicIslandProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [isHovered, setIsHovered] = useState(false)
@@ -300,21 +306,25 @@ export function DynamicIsland({
                 }}
                 layout
               >
-                {/* Close button always first - fixed, no scroll */}
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onClose()
-                  }}
-                  className="h-9 w-9 p-0 rounded-full hover:bg-destructive/10 hover:text-destructive transition-colors shrink-0"
-                  title="Close"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
+                {/* Close button - only show if not hidden */}
+                {!hideCloseButton && (
+                  <>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onClose()
+                      }}
+                      className="h-9 w-9 p-0 rounded-full hover:bg-destructive/10 hover:text-destructive transition-colors shrink-0"
+                      title="Close"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
 
-                <div className="w-px h-6 bg-border/50 shrink-0" />
+                    <div className="w-px h-6 bg-border/50 shrink-0" />
+                  </>
+                )}
 
                 {/* Scrollable container for action buttons - only on mobile */}
                 <div className="flex items-center gap-2 md:overflow-visible overflow-x-auto scrollbar-hide max-w-full">
@@ -352,6 +362,7 @@ export function DynamicIsland({
                   )}
 
                   {/* Action buttons */}
+                  {onSave && (
                   <Button 
                     variant="ghost" 
                     size="sm" 
@@ -368,6 +379,7 @@ export function DynamicIsland({
                       <Bookmark className="h-4 w-4" />
                     )}
                   </Button>
+                  )}
 
                   <Button 
                     variant="ghost" 
@@ -385,9 +397,33 @@ export function DynamicIsland({
                   <Button 
                     variant="ghost" 
                     size="sm" 
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       e.stopPropagation()
-                      onShare()
+                      if (shareUrl) {
+                        // Use provided share URL
+                        if (navigator.share) {
+                          try {
+                            await navigator.share({
+                              title: document.title,
+                              text: '',
+                              url: shareUrl,
+                            })
+                          } catch (err) {
+                            // User cancelled or error occurred
+                            console.log("Error sharing:", err)
+                          }
+                        } else {
+                          // Fallback: copy to clipboard
+                          try {
+                            await navigator.clipboard.writeText(shareUrl)
+                          } catch (err) {
+                            console.error('Error copying to clipboard:', err)
+                          }
+                        }
+                      } else {
+                        // Use default share handler
+                        onShare()
+                      }
                     }}
                     className="h-9 w-9 p-0 rounded-full hover:bg-primary/10 transition-colors hover-lift-subtle shrink-0"
                     title="Share"
@@ -395,6 +431,7 @@ export function DynamicIsland({
                     <Share className="h-4 w-4" />
                   </Button>
 
+                  {onOpenInNewTab && (
                   <Button 
                     variant="ghost" 
                     size="sm" 
@@ -407,6 +444,7 @@ export function DynamicIsland({
                   >
                     <Maximize2 className="h-4 w-4" />
                   </Button>
+                  )}
 
                   <Button 
                     variant="ghost" 

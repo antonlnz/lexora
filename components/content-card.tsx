@@ -74,6 +74,71 @@ function isVideoUrl(url: string | null | undefined): boolean {
   return videoExtensions.some(ext => lowerUrl.includes(ext))
 }
 
+// Función para obtener el thumbnail de un video de YouTube
+function getYouTubeThumbnail(url: string | null | undefined): string | null {
+  if (!url) return null
+  
+  // Extraer el ID del video de YouTube
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\?\/]+)/,
+    /youtube\.com\/shorts\/([^&\?\/]+)/
+  ]
+  
+  for (const pattern of patterns) {
+    const match = url.match(pattern)
+    if (match && match[1]) {
+      // Usar maxresdefault para mejor calidad, fallback a hqdefault
+      return `https://img.youtube.com/vi/${match[1]}/maxresdefault.jpg`
+    }
+  }
+  
+  return null
+}
+
+// Función para determinar el thumbnail de un video
+function getVideoThumbnail(article: ArticleWithUserData): string | null {
+  // 1. Si tiene featured_thumbnail_url (nuevo schema), usarlo
+  if (article.featured_thumbnail_url) {
+    return article.featured_thumbnail_url
+  }
+  
+  // 2. Si es YouTube, extraer el thumbnail de la URL
+  if (article.source.source_type === 'youtube_channel' || article.source.source_type === 'youtube_video') {
+    const ytThumbnail = getYouTubeThumbnail(article.url)
+    if (ytThumbnail) return ytThumbnail
+  }
+  
+  // 3. Fallback a null (sin thumbnail)
+  return null
+}
+
+// Función para obtener la URL del video
+function getVideoUrl(article: ArticleWithUserData): string | null {
+  // 1. Si tiene featured_media_url y es de tipo video, usarlo
+  if (article.featured_media_type === 'video' && article.featured_media_url) {
+    return article.featured_media_url
+  }
+  
+  return null
+}
+
+// Función para determinar si es contenido de video
+function isVideoContent(article: ArticleWithUserData): boolean {
+  // 1. Nuevo schema: verificar featured_media_type
+  if (article.featured_media_type === 'video') {
+    return true
+  }
+  
+  // 2. Por tipo de fuente
+  if (article.source.source_type === 'youtube_channel' || 
+      article.source.source_type === 'youtube_video' || 
+      article.source.source_type === 'tiktok') {
+    return true
+  }
+  
+  return false
+}
+
 export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProps) {
   const [isSaved, setIsSaved] = useState(article.user_article?.is_favorite || false)
   const [isRead, setIsRead] = useState(article.user_article?.is_read || false)
@@ -116,18 +181,19 @@ export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProp
   const relativeTime = getRelativeTime(article.published_at)
   const readTime = article.reading_time ? `${article.reading_time} min read` : undefined
   
-  // Detectar si es video: por media_type, video_url, o si image_url es un video
-  const hasVideoUrl = !!article.video_url
-  const imageUrlIsVideo = isVideoUrl(article.image_url)
-  const isVideo = article.media_type === 'video' || hasVideoUrl || imageUrlIsVideo || 
-                  sourceType === 'youtube' || sourceType === 'tiktok'
+  // Detectar si es video usando la nueva función helper
+  const isVideo = isVideoContent(article)
   
-  const videoDuration = article.video_duration ? formatVideoDuration(article.video_duration) : null
+  // Obtener URLs de video y thumbnail
+  const videoSrc = getVideoUrl(article)
+  const posterSrc = isVideo ? getVideoThumbnail(article) : article.featured_media_url
+
+  // Para imageSrc de fallback: usar poster o placeholder
+  const imageSrc = posterSrc || "/placeholder.svg"  // Duración del video (si está disponible)
+  const videoDuration = article.featured_media_duration
   
-  // Determinar qué URL usar para cada propósito
-  // Si image_url es un video, usarlo como video y buscar poster alternativo
-  const videoSrc = hasVideoUrl ? article.video_url : (imageUrlIsVideo ? article.image_url : null)
-  const imageSrc = imageUrlIsVideo ? "/placeholder.svg" : (article.image_url || "/placeholder.svg")
+  // Si hay video pero no hay poster, mostrar el video con metadata para cargar el primer frame
+  const showVideoWithoutPoster = isVideo && videoSrc && !posterSrc
 
   if (viewMode === "list") {
     return (
@@ -137,39 +203,47 @@ export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProp
         onClick={handleOpenContent}
       >
         <div className="flex gap-4">
-          <div className="relative w-24 h-24 shrink-0 rounded-lg overflow-hidden">
-            {isVideo ? (
+          <div className="relative w-24 h-24 shrink-0 rounded-lg overflow-hidden bg-muted">
+            {isVideo && videoSrc ? (
               <>
-                {videoSrc ? (
-                  <video 
-                    src={videoSrc}
-                    poster={imageSrc !== "/placeholder.svg" ? imageSrc : undefined}
-                    className="w-full h-full object-cover"
-                    muted
-                    playsInline
-                    preload="metadata"
-                  />
-                ) : (
-                  // Fallback: usar solo el poster si no hay video_url
+                {/* Si hay poster, mostrarlo como fondo */}
+                {posterSrc && (
                   <img 
-                    src={imageSrc}
+                    src={posterSrc}
                     alt={article.title}
-                    className="w-full h-full object-cover"
+                    className="absolute inset-0 w-full h-full object-cover"
                   />
                 )}
+                {/* Video siempre visible - si no hay poster, el atributo preload="metadata" cargará el primer frame */}
+                <video 
+                  src={videoSrc}
+                  poster={posterSrc || undefined}
+                  className="relative w-full h-full object-cover"
+                  muted
+                  playsInline
+                  preload="metadata"
+                  style={{ pointerEvents: 'none' }}
+                  // Forzar que se muestre algo aunque no haya poster
+                  onLoadedMetadata={(e) => {
+                    const video = e.currentTarget
+                    video.currentTime = 0.1 // Buscar 0.1 segundos para asegurar que se muestre un frame
+                  }}
+                />
+                {/* Overlay de play */}
                 <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
                   <div className="bg-white/90 rounded-full p-2 shadow-lg">
                     <Play className="h-4 w-4 text-black fill-black" />
                   </div>
                 </div>
+                {/* Mostrar duración si está disponible */}
                 {videoDuration && (
                   <div className="absolute bottom-1 right-1 bg-black/80 text-white text-xs px-1.5 py-0.5 rounded">
-                    {videoDuration}
+                    {formatVideoDuration(videoDuration)}
                   </div>
                 )}
               </>
             ) : (
-              // Usar img normal en lugar de Image de Next.js para evitar errores con URLs inesperadas
+              // Usar img normal para imágenes o cuando solo hay thumbnail sin video
               <img 
                 src={imageSrc} 
                 alt={article.title} 
@@ -187,10 +261,10 @@ export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProp
                 <span className="text-sm text-muted-foreground">{article.source.title}</span>
               </div>
               <div className="flex items-center gap-1">
-                <Button variant="ghost" size="sm" onClick={handleSave} className="h-8 w-8 p-0">
+                <Button variant="ghost" size="sm" onClick={handleSave} className="h-8 w-8 p-0 hover-lift-subtle">
                   {isSaved ? <BookmarkCheck className="h-4 w-4 text-primary" /> : <Bookmark className="h-4 w-4" />}
                 </Button>
-                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0 hover-lift-subtle">
                   <ExternalLink className="h-4 w-4" />
                 </Button>
               </div>
@@ -213,14 +287,6 @@ export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProp
                 </span>
                 {readTime && <span>{readTime}</span>}
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleMarkRead}
-                className="text-xs"
-              >
-                {isRead ? "Mark Unread" : "Mark Read"}
-              </Button>
             </div>
 
             <div className="flex items-center justify-between mt-4 pt-4 border-t border-border/50">
@@ -228,11 +294,11 @@ export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProp
                 variant="ghost"
                 size="sm"
                 onClick={handleMarkRead}
-                className="text-xs"
+                className="text-xs hover-lift-subtle"
               >
                 {isRead ? "Mark Unread" : "Mark Read"}
               </Button>
-              <Button size="sm" className="default" onClick={handleOpenInNewTab}>
+              <Button size="sm" className="default hover-lift-subtle" onClick={handleOpenInNewTab}>
                 <ExternalLink className="h-3 w-3 mr-2" />
                 Read
               </Button>
@@ -250,50 +316,66 @@ export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProp
       onClick={handleOpenContent}
     >
       <div className="relative aspect-video overflow-hidden bg-muted">
-        {isVideo ? (
+        {isVideo && videoSrc ? (
           <>
-            {videoSrc ? (
-              <video
-                src={videoSrc}
-                poster={imageSrc !== "/placeholder.svg" ? imageSrc : undefined}
-                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                muted
-                playsInline
-                preload="metadata"
-              />
-            ) : (
-              // Fallback: usar solo el poster si no hay video_url
+            {/* Si hay poster, mostrarlo como fondo */}
+            {posterSrc && (
               <img
-                src={imageSrc}
+                src={posterSrc}
                 alt={article.title}
-                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                className="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
               />
             )}
+            {/* Video siempre visible - si no hay poster, el atributo preload="metadata" cargará el primer frame */}
+            <video
+              src={videoSrc}
+              poster={posterSrc || undefined}
+              className="relative w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+              muted
+              playsInline
+              preload="metadata"
+              style={{ pointerEvents: 'none' }}
+              // Forzar que se muestre algo aunque no haya poster
+              onLoadedMetadata={(e) => {
+                const video = e.currentTarget
+                video.currentTime = 0.1 // Buscar 0.1 segundos para asegurar que se muestre un frame
+              }}
+            />
+            {/* Overlay de play */}
             <div className="absolute inset-0 flex items-center justify-center bg-linear-to-t from-black/60 via-transparent to-transparent">
               <div className="bg-white/95 rounded-full p-4 group-hover:bg-white group-hover:scale-110 transition-all duration-300 shadow-xl">
                 <Play className="h-8 w-8 text-black fill-black" />
               </div>
             </div>
+            {/* Mostrar duración si está disponible */}
             {videoDuration && (
-              <div className="absolute bottom-3 right-3 bg-black/90 text-white text-sm font-medium px-2.5 py-1 rounded backdrop-blur-sm">
-                {videoDuration}
+              <div className="absolute bottom-2 right-2 bg-black/80 text-white text-sm px-2 py-1 rounded">
+                {formatVideoDuration(videoDuration)}
               </div>
             )}
           </>
+        ) : isVideo && !videoSrc ? (
+          <>
+            {/* Mostrar thumbnail cuando no hay videoSrc */}
+            <img
+              src={imageSrc}
+              alt={article.title}
+              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+            />
+            {/* Overlay de play */}
+            <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+              <div className="bg-white/95 rounded-full p-4 group-hover:bg-white group-hover:scale-110 transition-all duration-300 shadow-xl">
+                <Play className="h-8 w-8 text-black fill-black" />
+              </div>
+            </div>
+          </>
         ) : (
-          // Usar img normal en lugar de Image de Next.js para evitar errores con URLs inesperadas
+          // Usar img normal para imágenes
           <img
             src={imageSrc}
             alt={article.title}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
           />
-        )}
-        {(sourceType === "youtube" || sourceType === "tiktok") && !isVideo && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="bg-black/50 rounded-full p-3 group-hover:bg-black/70 transition-colors">
-              <Play className="h-6 w-6 text-white fill-white" />
-            </div>
-          </div>
         )}
         <div className="absolute top-2 left-2">
           <Badge variant="outline" className={`${typeColors[sourceType] || typeColors.rss} backdrop-blur-sm`}>

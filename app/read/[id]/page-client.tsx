@@ -1,148 +1,134 @@
 "use client"
 
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { DynamicIsland } from "@/components/dynamic-island"
 import { AmbientBackground } from "@/components/ambient-background"
+import { VideoAmbientBackground } from "@/components/video-ambient-background"
 import {
-  ArrowLeft,
-  ChevronLeft,
-  ChevronRight,
   User,
   Clock,
   Eye,
+  ArrowLeft,
 } from "lucide-react"
-import Image from "next/image"
-import { useRouter } from "next/navigation"
-
-interface ContentItem {
-  id: string
-  type: "news" | "youtube" | "twitter" | "instagram" | "tiktok" | "newsletter"
-  title: string
-  excerpt: string
-  content?: string
-  source: string
-  author: string
-  publishedAt: string
-  readTime?: string
-  duration?: string
-  image: string
-  tags: string[]
-  isRead: boolean
-  isSaved: boolean
-  views?: string
-  engagement?: string
-}
+import Link from "next/link"
+import type { ArticleWithUserData } from "@/types/database"
+import { useIsMobile } from "@/hooks/use-mobile"
+import { LexoraLogo } from "@/components/lexora-logo"
+import { sanitizeHTML } from "@/lib/utils/security"
 
 const typeIcons = {
   news: "📰",
+  rss: "📰",
   youtube: "🎥",
+  youtube_channel: "🎥",
+  youtube_video: "🎥",
   twitter: "🐦",
   instagram: "📸",
   tiktok: "🎵",
   newsletter: "📧",
+  website: "🌐",
 }
 
 const typeColors = {
   news: "bg-blue-500/10 text-blue-600 border-blue-500/20",
+  rss: "bg-blue-500/10 text-blue-600 border-blue-500/20",
   youtube: "bg-red-500/10 text-red-600 border-red-500/20",
+  youtube_channel: "bg-red-500/10 text-red-600 border-red-500/20",
+  youtube_video: "bg-red-500/10 text-red-600 border-red-500/20",
   twitter: "bg-sky-500/10 text-sky-600 border-sky-500/20",
   instagram: "bg-pink-500/10 text-pink-600 border-pink-500/20",
   tiktok: "bg-purple-500/10 text-purple-600 border-purple-500/20",
   newsletter: "bg-green-500/10 text-green-600 border-green-500/20",
+  website: "bg-gray-500/10 text-gray-600 border-gray-500/20",
 }
 
-// Mock content data
-const mockContent: Record<string, ContentItem> = {
-  "1": {
-    id: "1",
-    type: "news",
-    title: "The Future of Sustainable Technology in 2025",
-    excerpt:
-      "Exploring breakthrough innovations that are reshaping how we think about environmental responsibility in tech.",
-    source: "TechCrunch",
-    author: "Sarah Chen",
-    publishedAt: "2 hours ago",
-    readTime: "5 min read",
-    image: "/placeholder.svg?height=400&width=800",
-    tags: ["Technology", "Sustainability", "Innovation"],
-    isRead: false,
-    isSaved: false,
-  },
-  "2": {
-    id: "2",
-    type: "youtube",
-    title: "Building Modern Web Applications with Next.js 15",
-    excerpt: "A comprehensive guide to the latest features and best practices for modern web development.",
-    source: "Vercel",
-    author: "Lee Robinson",
-    publishedAt: "4 hours ago",
-    duration: "24:15",
-    image: "/placeholder.svg?height=400&width=800",
-    tags: ["Web Development", "Next.js", "Tutorial"],
-    isRead: false,
-    isSaved: true,
-    views: "125K views",
-  },
+// Función para detectar si una URL es un video
+function isVideoUrl(url: string | null | undefined): boolean {
+  if (!url) return false
+  const videoExtensions = ['.mp4', '.webm', '.ogg', '.mov', '.avi', '.wmv', '.flv', '.mkv', '.m4v']
+  const lowerUrl = url.toLowerCase()
+  return videoExtensions.some(ext => lowerUrl.includes(ext))
 }
 
-const mockContentData: Record<string, string> = {
-  "1": `
-    <p>The world of technology is rapidly evolving, and sustainability has become a cornerstone of innovation. As we move into 2025, we're witnessing unprecedented developments that promise to reshape our relationship with the environment.</p>
-    
-    <h2>Revolutionary Breakthroughs</h2>
-    <p>From carbon-negative data centers to biodegradable electronics, the tech industry is pioneering solutions that don't just minimize harm—they actively heal our planet. Companies are investing billions in research that could fundamentally change how we produce, consume, and dispose of technology.</p>
-    
-    <p>One of the most exciting developments is the emergence of bio-computing, where living organisms are used to process information. This technology could reduce energy consumption by up to 90% compared to traditional silicon-based processors.</p>
-    
-    <h2>The Role of AI in Sustainability</h2>
-    <p>Artificial intelligence is playing a crucial role in optimizing energy consumption across industries. Smart grids powered by AI can predict energy demand with unprecedented accuracy, reducing waste and improving efficiency.</p>
-    
-    <p>Machine learning algorithms are also being used to design more efficient materials, predict equipment failures before they happen, and optimize supply chains to minimize carbon footprints.</p>
-  `,
-  "2": `
-    <div class="video-container mb-6">
-      <div class="aspect-video bg-muted rounded-lg flex items-center justify-center">
-        <div class="text-center">
-          <div class="h-16 w-16 mx-auto mb-4 opacity-50">▶</div>
-          <p class="text-muted-foreground">Video Player Placeholder</p>
-        </div>
-      </div>
-    </div>
-    
-    <p>In this comprehensive tutorial, we'll explore the latest features of Next.js 15 and how they can revolutionize your web development workflow.</p>
-    
-    <h2>What's New in Next.js 15</h2>
-    <p>Next.js 15 introduces several groundbreaking features that make building modern web applications faster and more efficient than ever before.</p>
-    
-    <h3>Server Components by Default</h3>
-    <p>All components are now server components by default, providing better performance and smaller bundle sizes out of the box.</p>
-    
-    <h3>Improved Caching</h3>
-    <p>The new caching system is more intelligent and provides better control over data freshness and revalidation strategies.</p>
-  `,
+// Función para obtener el thumbnail de un video de YouTube
+function getYouTubeThumbnail(url: string | null | undefined): string | null {
+  if (!url) return null
+  
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\?\/]+)/,
+    /youtube\.com\/shorts\/([^&\?\/]+)/
+  ]
+  
+  for (const pattern of patterns) {
+    const match = url.match(pattern)
+    if (match && match[1]) {
+      return `https://img.youtube.com/vi/${match[1]}/maxresdefault.jpg`
+    }
+  }
+  
+  return null
+}
+
+// Función para extraer el ID de video de YouTube
+function getYouTubeVideoId(url: string | null | undefined): string | null {
+  if (!url) return null
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\?\/]+)/,
+    /youtube\.com\/shorts\/([^&\?\/]+)/
+  ]
+  for (const pattern of patterns) {
+    const match = url.match(pattern)
+    if (match && match[1]) return match[1]
+  }
+  return null
+}
+
+// Helper function to normalize article data from database
+function normalizeContent(article: ArticleWithUserData) {
+  return {
+    id: article.id,
+    type: article.source.source_type,
+    title: article.title,
+    excerpt: article.excerpt || '',
+    content: article.content || '',
+    source: article.source.title,
+    author: article.author || 'Unknown',
+    publishedAt: article.published_at ? new Date(article.published_at).toLocaleDateString() : 'Unknown',
+    url: article.url,
+    readTime: article.reading_time ? `${article.reading_time} min read` : undefined,
+    image: article.featured_media_type === 'image' 
+      ? (article.featured_media_url || article.image_url || '/placeholder.svg')
+      : (article.featured_thumbnail_url || article.image_url || '/placeholder.svg'),
+    isRead: article.user_article?.is_read || false,
+    isSaved: article.user_article?.is_favorite || false,
+    videoUrl: article.featured_media_type === 'video' ? article.featured_media_url : null,
+    videoDuration: article.featured_media_duration,
+    mediaType: article.featured_media_type,
+  }
 }
 
 export default function ReadPageClient() {
   const params = useParams()
   const router = useRouter()
   const contentRef = useRef<HTMLDivElement>(null)
-  const [content, setContent] = useState<ContentItem | null>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [content, setContent] = useState<ArticleWithUserData | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
   const [isSaved, setIsSaved] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
   const [readingProgress, setReadingProgress] = useState(0)
   const [isScrolling, setIsScrolling] = useState(false)
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false)
+  const [showPlayButton, setShowPlayButton] = useState(true)
+  const [mediaAspectRatio, setMediaAspectRatio] = useState<number | null>(null)
+  const [isMediaVertical, setIsMediaVertical] = useState(false)
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-
-  // Get all available articles for navigation
-  const allArticleIds = Object.keys(mockContent)
-  const currentArticleIndex = allArticleIds.indexOf(params.id as string)
-  const hasNext = currentArticleIndex !== -1 && currentArticleIndex < allArticleIds.length - 1
-  const hasPrevious = currentArticleIndex > 0
+  const isMobile = useIsMobile()
 
   // Reading customization state
   const [fontSize, setFontSize] = useState(16)
@@ -155,17 +141,14 @@ export default function ReadPageClient() {
 
   // Update theme-color meta tag when background color changes
   useEffect(() => {
-    // Remove any existing theme-color meta tags to avoid conflicts
     const existingMetas = document.querySelectorAll('meta[name="theme-color"]')
     existingMetas.forEach(meta => meta.remove())
     
-    // Create new theme-color meta tag
     const themeColorMeta = document.createElement('meta')
     themeColorMeta.setAttribute('name', 'theme-color')
     themeColorMeta.setAttribute('content', backgroundColor)
     document.head.appendChild(themeColorMeta)
     
-    // Also update for Safari on macOS/iOS
     let appleStatusBarMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')
     if (!appleStatusBarMeta) {
       appleStatusBarMeta = document.createElement('meta')
@@ -174,7 +157,6 @@ export default function ReadPageClient() {
     }
     appleStatusBarMeta.setAttribute('content', 'black-translucent')
 
-    // Cleanup: restore default color when component unmounts
     return () => {
       const defaultColor = document.documentElement.classList.contains('dark') ? '#000000' : '#ffffff'
       existingMetas.forEach(meta => meta.remove())
@@ -185,85 +167,32 @@ export default function ReadPageClient() {
     }
   }, [backgroundColor])
 
+  // Fetch article data
   useEffect(() => {
-    const id = params.id as string
-    const foundContent = mockContent[id]
-    if (foundContent) {
-      setContent(foundContent)
-      setIsSaved(foundContent.isSaved)
-    }
-  }, [params.id])
-
-  const handleNavigateNext = () => {
-    if (hasNext) {
-      const nextId = allArticleIds[currentArticleIndex + 1]
-      router.push(`/read/${nextId}`)
-    }
-  }
-
-  const handleNavigatePrevious = () => {
-    if (hasPrevious) {
-      const previousId = allArticleIds[currentArticleIndex - 1]
-      router.push(`/read/${previousId}`)
-    }
-  }
-
-  // Keyboard navigation
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight' && hasNext) {
-        handleNavigateNext()
-      } else if (e.key === 'ArrowLeft' && hasPrevious) {
-        handleNavigatePrevious()
+    const fetchArticle = async () => {
+      const id = params.id as string
+      if (!id) {
+        setIsLoading(false)
+        return
       }
-    }
 
-    window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [hasNext, hasPrevious, currentArticleIndex])
-
-  // Touch swipe navigation
-  useEffect(() => {
-    let touchStartX = 0
-    let touchEndX = 0
-
-    const handleTouchStart = (e: TouchEvent) => {
-      touchStartX = e.touches[0].clientX
-    }
-
-    const handleTouchEnd = (e: TouchEvent) => {
-      touchEndX = e.changedTouches[0].clientX
-      handleSwipe()
-    }
-
-    const handleSwipe = () => {
-      const swipeThreshold = 100
-      const diff = touchStartX - touchEndX
-
-      if (Math.abs(diff) > swipeThreshold) {
-        if (diff > 0 && hasNext) {
-          // Swipe left - next article
-          handleNavigateNext()
-        } else if (diff < 0 && hasPrevious) {
-          // Swipe right - previous article
-          handleNavigatePrevious()
+      try {
+        const response = await fetch(`/api/articles/${id}`)
+        if (!response.ok) {
+          throw new Error('Article not found')
         }
+        const data = await response.json()
+        setContent(data)
+        setIsSaved(data.user_article?.is_favorite || false)
+        setIsLoading(false)
+      } catch (error) {
+        console.error('Error fetching article:', error)
+        setIsLoading(false)
       }
     }
 
-    const contentElement = contentRef.current
-    if (contentElement) {
-      contentElement.addEventListener('touchstart', handleTouchStart, { passive: true })
-      contentElement.addEventListener('touchend', handleTouchEnd, { passive: true })
-
-      return () => {
-        contentElement.removeEventListener('touchstart', handleTouchStart)
-        contentElement.removeEventListener('touchend', handleTouchEnd)
-      }
-    }
-  }, [hasNext, hasPrevious, currentArticleIndex])
+    fetchArticle()
+  }, [params.id])
 
   useEffect(() => {
     const handleScroll = () => {
@@ -274,7 +203,6 @@ export default function ReadPageClient() {
         const progress = scrollHeight > 0 ? Math.min((scrollTop / scrollHeight) * 100, 100) : 0
         setReadingProgress(progress)
         
-        // Detectar si está scrolling
         setIsScrolling(true)
         if (scrollTimeoutRef.current) {
           clearTimeout(scrollTimeoutRef.current)
@@ -297,15 +225,19 @@ export default function ReadPageClient() {
     }
   }, [])
 
-  const handleSave = () => {
-    setIsSaved(!isSaved)
-  }
+  useEffect(() => {
+    if (content) {
+      setMediaAspectRatio(null)
+      setIsMediaVertical(false)
+    }
+  }, [content])
 
   const handleDownload = async () => {
     if (!content) return
 
     try {
-      // Crear un blob con el contenido del artículo
+      const contentHtml = content.content || `<p>${content.excerpt || ''}</p>`
+      
       const htmlContent = `
         <!DOCTYPE html>
         <html>
@@ -321,7 +253,7 @@ export default function ReadPageClient() {
           <body>
             <h1>${content.title}</h1>
             <div class="meta">
-              <p>By ${content.author} | ${content.source} | ${content.publishedAt}</p>
+              <p>By ${content.author || 'Unknown'} | ${content.source.title} | ${content.published_at ? new Date(content.published_at).toLocaleDateString() : 'Unknown'}</p>
             </div>
             <div>${contentHtml}</div>
           </body>
@@ -343,25 +275,36 @@ export default function ReadPageClient() {
   }
 
   const handleShare = async () => {
-    if (navigator.share && content) {
+    if (!content) return
+    
+    const shareUrl = `${window.location.origin}/read/${content.id}`
+    
+    if (navigator.share) {
       try {
         await navigator.share({
           title: content.title,
-          text: content.excerpt,
-          url: window.location.href,
+          text: content.excerpt || '',
+          url: shareUrl,
         })
       } catch (err) {
+        // User cancelled or error occurred
         console.log("Error sharing:", err)
+      }
+    } else {
+      // Fallback: copy to clipboard
+      try {
+        await navigator.clipboard.writeText(shareUrl)
+        // You could show a toast here
+      } catch (err) {
+        console.error('Error copying to clipboard:', err)
       }
     }
   }
 
-  const handleOpenInNewTab = () => {
-    window.open(window.location.href, '_blank')
-  }
-
-  const handleClose = () => {
-    router.back()
+  const handleOpenOriginal = () => {
+    if (content && content.url && content.url !== '#') {
+      window.open(content.url, "_blank")
+    }
   }
 
   const togglePlayback = () => {
@@ -372,6 +315,36 @@ export default function ReadPageClient() {
     setIsMuted(!isMuted)
   }
 
+  const handleVideoPlay = () => {
+    setIsVideoPlaying(true)
+    setShowPlayButton(false)
+  }
+
+  const handleVideoPause = () => {
+    setIsVideoPlaying(false)
+  }
+
+  const handleVideoClick = () => {
+    if (videoRef.current) {
+      if (isVideoPlaying) {
+        videoRef.current.pause()
+      } else {
+        videoRef.current.play()
+      }
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading article...</p>
+        </div>
+      </div>
+    )
+  }
+
   if (!content) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -380,15 +353,38 @@ export default function ReadPageClient() {
           <p className="text-muted-foreground mb-4">The content you're looking for doesn't exist.</p>
           <Button onClick={() => router.push("/")} className="default hover-lift-subtle">
             <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Feed
+            Back to Home
           </Button>
         </div>
       </div>
     )
   }
 
-  const isMultimedia = content.type === "youtube" || content.type === "tiktok" || content.type === "instagram"
-  const contentHtml = mockContentData[content.id] || `<p>${content.excerpt}</p>`
+  const normalizedContent = normalizeContent(content)
+  const isMultimedia = normalizedContent.type === "youtube_channel" || 
+                       normalizedContent.type === "youtube_video" || 
+                       normalizedContent.type === "tiktok" || 
+                       normalizedContent.type === "instagram"
+  
+  const hasVideo = normalizedContent.videoUrl || 
+                   normalizedContent.mediaType === 'video' || 
+                   isVideoUrl(normalizedContent.image)
+  
+  let videoThumbnail: string | null = null
+  if (normalizedContent.type === 'youtube_channel' || normalizedContent.type === 'youtube_video') {
+    videoThumbnail = getYouTubeThumbnail(content.url) || getYouTubeThumbnail(normalizedContent.videoUrl)
+  }
+  if (!videoThumbnail && normalizedContent.image && !isVideoUrl(normalizedContent.image)) {
+    videoThumbnail = normalizedContent.image
+  }
+  
+  const videoPlayUrl = normalizedContent.videoUrl || 
+                       (isVideoUrl(normalizedContent.image) ? normalizedContent.image : null)
+  
+  const contentHtml = normalizedContent.content || `<p>${normalizedContent.excerpt}</p>`
+
+  // Get share URL
+  const shareUrl = typeof window !== 'undefined' ? `${window.location.origin}/read/${content.id}` : ''
 
   return (
     <div
@@ -398,62 +394,44 @@ export default function ReadPageClient() {
       }}
     >
       {/* Ambient background for multimedia content */}
-      {isMultimedia && <AmbientBackground imageUrl={content.image} isActive={isPlaying} intensity={0.3} />}
-
-      {/* Swipe indicators - only visible on touch devices */}
-      {hasPrevious && (
-        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-16 bg-linear-to-r from-primary/40 to-transparent rounded-r-full z-10 md:hidden pointer-events-none" />
-      )}
-      {hasNext && (
-        <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-16 bg-linear-to-l from-primary/40 to-transparent rounded-l-full z-10 md:hidden pointer-events-none" />
-      )}
+      {hasVideo && isVideoPlaying && videoRef.current ? (
+        <VideoAmbientBackground 
+          videoElement={videoRef.current} 
+          isPlaying={isVideoPlaying} 
+          intensity={0.6}
+          updateInterval={200}
+        />
+      ) : isMultimedia ? (
+        <AmbientBackground imageUrl={normalizedContent.image} isActive={isPlaying} intensity={0.3} />
+      ) : null}
 
       {/* Reading progress bar */}
       <div className="fixed top-0 left-0 w-full h-1 bg-border/20 z-10">
         <div className="h-full bg-primary transition-all duration-200" style={{ width: `${readingProgress}%` }} />
       </div>
 
-      {/* Header - Navigation buttons */}
-      <header className="sticky top-0 z-10 glass-card border-b">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-          <Button variant="ghost" onClick={() => router.back()} size="sm" className="hover-lift-subtle">
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back
-          </Button>
+      {/* Header with Lexora logo */}
+      <header className="fixed top-0 left-0 right-0 z-30 backdrop-blur-sm bg-background/20 border-b border-border/20">
+        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
+          <LexoraLogo href="/signup" />
           
-          <div className="hidden md:flex items-center gap-2">
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={handleNavigatePrevious} 
-              disabled={!hasPrevious}
-              className="hover-lift-subtle"
-            >
-              <ChevronLeft className="h-4 w-4 mr-1" />
-              Previous
-            </Button>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              onClick={handleNavigateNext} 
-              disabled={!hasNext}
-              className="hover-lift-subtle"
-            >
-              Next
-              <ChevronRight className="h-4 w-4 ml-1" />
-            </Button>
-          </div>
+          <Button 
+            variant="ghost" 
+            onClick={() => router.push("/signup")} 
+            size="sm" 
+            className="hover-lift-subtle"
+          >
+            Sign up
+          </Button>
         </div>
       </header>
 
-      {/* Dynamic Island with all controls */}
+      {/* Dynamic Island - without close button */}
       <DynamicIsland
-        onClose={handleClose}
-        isSaved={isSaved}
-        onSave={handleSave}
+        onClose={() => {}} // No-op since we're in public page
         onDownload={handleDownload}
         onShare={handleShare}
-        onOpenInNewTab={handleOpenInNewTab}
+        onOpenOriginal={handleOpenOriginal}
         isMultimedia={isMultimedia}
         isPlaying={isPlaying}
         isMuted={isMuted}
@@ -475,15 +453,17 @@ export default function ReadPageClient() {
         setLineHeight={setLineHeight}
         maxWidth={maxWidth}
         setMaxWidth={setMaxWidth}
+        hideCloseButton={true}
+        shareUrl={shareUrl}
       />
 
       {/* Scrollable Content */}
       <div
         ref={contentRef}
-        className="overflow-y-auto pt-8 pb-16 px-4"
+        className="overflow-y-auto pt-20 pb-16 px-4"
         style={{
           color: isDarkMode ? "#ffffff" : textColor,
-          minHeight: "calc(100vh - 73px)",
+          minHeight: "100vh",
         }}
       >
         <article
@@ -505,55 +485,126 @@ export default function ReadPageClient() {
           {/* Article Header */}
           <header className="mb-8">
             <div className="flex items-center gap-2 mb-4">
-              <Badge variant="outline" className={typeColors[content.type]}>
-                {typeIcons[content.type]} {content.type}
+              <Badge variant="outline" className={typeColors[normalizedContent.type as keyof typeof typeColors] || typeColors.website}>
+                {typeIcons[normalizedContent.type as keyof typeof typeIcons] || typeIcons.website} {normalizedContent.type}
               </Badge>
-              <span className="text-sm opacity-70">{content.source}</span>
+              <span className="text-sm opacity-70">{normalizedContent.source}</span>
             </div>
 
-            <h1 className="text-4xl font-bold mb-4 text-balance leading-tight">{content.title}</h1>
+            <h1 className="text-4xl font-bold mb-4 text-balance leading-tight">{normalizedContent.title}</h1>
 
             <div className="flex items-center gap-4 text-sm opacity-70 mb-6">
               <span className="flex items-center gap-1">
                 <User className="h-3 w-3" />
-                {content.author}
+                {normalizedContent.author}
               </span>
               <span className="flex items-center gap-1">
                 <Clock className="h-3 w-3" />
-                {content.publishedAt}
+                {normalizedContent.publishedAt}
               </span>
-              {content.readTime && <span>{content.readTime}</span>}
-              {content.views && (
-                <span className="flex items-center gap-1">
-                  <Eye className="h-3 w-3" />
-                  {content.views}
-                </span>
-              )}
+              {normalizedContent.readTime && <span>{normalizedContent.readTime}</span>}
             </div>
 
-            {/* Featured Image */}
-            <div className="relative aspect-video rounded-lg overflow-hidden mb-8">
-              <Image
-                src={content.image || "/placeholder.svg"}
-                alt={content.title}
-                fill
-                className="object-cover"
-                priority
-              />
-              {content.duration && (
-                <div className="absolute bottom-4 right-4 bg-black/80 text-white px-3 py-1 rounded text-sm">
-                  {content.duration}
-                </div>
-              )}
-            </div>
+            {/* Featured Image or Video */}
+            <div 
+              className={`relative rounded-lg overflow-hidden mb-8 bg-muted ${
+                mediaAspectRatio !== null
+                  ? isMediaVertical
+                    ? 'aspect-[9/16] max-h-[80vh]'
+                    : 'aspect-video'
+                  : 'aspect-video'
+              }`}
+              style={{
+                ...(mediaAspectRatio !== null && isMediaVertical
+                  ? { maxWidth: '100%', width: 'auto', margin: '0 auto' }
+                  : {})
+              }}
+            >
+              {(() => {
+                const youtubeId = getYouTubeVideoId(normalizedContent.videoUrl)
+                
+                if (youtubeId) {
+                  return (
+                    <iframe
+                      src={`https://www.youtube-nocookie.com/embed/${youtubeId}?rel=0&modestbranding=1`}
+                      title={normalizedContent.title}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                      className="absolute inset-0 w-full h-full"
+                    />
+                  )
+                } else if (hasVideo && videoPlayUrl) {
+                  return (
+                    <div className="relative w-full h-full group">
+                      {videoThumbnail && (
+                        <img
+                          src={videoThumbnail}
+                          alt={normalizedContent.title}
+                          className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${isVideoPlaying ? 'opacity-0' : 'opacity-100'}`}
+                          onLoad={(e) => {
+                            const img = e.currentTarget
+                            const aspectRatio = img.naturalWidth / img.naturalHeight
+                            setMediaAspectRatio(aspectRatio)
+                            setIsMediaVertical(aspectRatio < 1)
+                          }}
+                        />
+                      )}
+                      
+                      {showPlayButton && (
+                        <button
+                          onClick={() => videoRef.current?.play()}
+                          className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[2px] transition-all duration-300 hover:bg-black/40 z-10"
+                        >
+                          <div className="bg-white/95 rounded-full p-6 shadow-2xl transform transition-transform hover:scale-110">
+                            <svg className="h-12 w-12 text-black fill-black" viewBox="0 0 24 24">
+                              <path d="M8 5v14l11-7z"/>
+                            </svg>
+                          </div>
+                        </button>
+                      )}
 
-            {/* Tags */}
-            <div className="flex flex-wrap gap-2 mb-8">
-              {content.tags.map((tag: string) => (
-                <Badge key={tag} variant="secondary" className="glass">
-                  {tag}
-                </Badge>
-              ))}
+                      <video
+                        ref={videoRef}
+                        src={videoPlayUrl}
+                        poster={videoThumbnail || undefined}
+                        controls
+                        muted={isMuted}
+                        loop
+                        playsInline
+                        className="relative w-full h-full object-contain"
+                        preload="metadata"
+                        onPlay={handleVideoPlay}
+                        onPause={handleVideoPause}
+                        onLoadedMetadata={(e) => {
+                          const video = e.currentTarget
+                          const aspectRatio = video.videoWidth / video.videoHeight
+                          setMediaAspectRatio(aspectRatio)
+                          setIsMediaVertical(aspectRatio < 1)
+                          if (!videoThumbnail) {
+                            video.currentTime = 0.1
+                          }
+                        }}
+                      >
+                        Tu navegador no soporta la reproducción de videos.
+                      </video>
+                    </div>
+                  )
+                } else {
+                  return (
+                    <img
+                      src={videoThumbnail || normalizedContent.image || "/placeholder.svg"}
+                      alt={normalizedContent.title}
+                      className="absolute inset-0 w-full h-full object-contain"
+                      onLoad={(e) => {
+                        const img = e.currentTarget
+                        const aspectRatio = img.naturalWidth / img.naturalHeight
+                        setMediaAspectRatio(aspectRatio)
+                        setIsMediaVertical(aspectRatio < 1)
+                      }}
+                    />
+                  )
+                }
+              })()}
             </div>
           </header>
 
@@ -567,7 +618,7 @@ export default function ReadPageClient() {
               fontSize: `${fontSize}px`,
               lineHeight: lineHeight,
             }}
-            dangerouslySetInnerHTML={{ __html: contentHtml }}
+            dangerouslySetInnerHTML={{ __html: sanitizeHTML(contentHtml) }}
           />
         </article>
       </div>

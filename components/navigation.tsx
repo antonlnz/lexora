@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { SearchBar } from "@/components/search-bar"
+import { LexoraLogo } from "@/components/lexora-logo"
 
 export function Navigation() {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
@@ -49,11 +50,7 @@ export function Navigation() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
-          <div className="flex items-center">
-            <Link href="/" className="text-2xl font-playfair font-bold text-foreground hover-lift-subtle">
-              lexora.
-            </Link>
-          </div>
+          <LexoraLogo href="/" />
 
           {/* Desktop Navigation */}
           {isAuthenticated && (

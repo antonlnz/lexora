@@ -87,44 +87,6 @@ export function ArchiveContent() {
             </TabsContent>
           </Tabs>
         </div>
-
-        <div className="space-y-6">
-          {/* Reading Progress */}
-          <GlassProgressCard
-            title="Weekly Reading Goal"
-            description="Keep up the great work!"
-            progress={24}
-            total={30}
-          />
-
-          {/* Activity Feed */}
-          <GlassActivityFeed />
-
-          {/* Reading Stats */}
-          <Card className="glass-card p-6">
-            <h3 className="text-lg font-semibold mb-4">This Month</h3>
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Articles read</span>
-                <span className="font-semibold">127</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Time spent</span>
-                <span className="font-semibold">18h 42m</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Favorite topic</span>
-                <Badge variant="secondary" className="glass">
-                  Technology
-                </Badge>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Streak</span>
-                <span className="font-semibold">12 days</span>
-              </div>
-            </div>
-          </Card>
-        </div>
       </div>
     </div>
   )

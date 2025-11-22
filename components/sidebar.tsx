@@ -5,10 +5,10 @@ import { Badge } from "@/components/ui/badge"
 import { GlassNotificationBadge, GlassTooltip } from "@/components/glass-components"
 import { Newspaper, Youtube, Twitter, Instagram, Music2, Mail, Plus, TrendingUp, Clock, Bookmark, ArrowLeft, ExternalLink, Globe, Rss } from "lucide-react"
 import { useState, useEffect } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { AddSourceDialog } from "@/components/add-source-dialog"
 import { useSubscription } from "@/contexts/subscription-context"
-import { sourceService } from "@/lib/services/source-service"
-import type { Source } from "@/types/database"
+import { sourceService, type SourceWithUserData } from "@/lib/services/source-service"
 
 const initialSources = [
   {
@@ -90,11 +90,13 @@ interface SourceCategory {
 }
 
 export function Sidebar() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const [isAddSourceOpen, setIsAddSourceOpen] = useState(false)
   const { canAddSource } = useSubscription()
   const [sources, setSources] = useState<any[]>(initialSources)
   const [selectedCategory, setSelectedCategory] = useState<SourceCategory | null>(null)
-  const [categorySources, setCategorySources] = useState<Source[]>([])
+  const [categorySources, setCategorySources] = useState<SourceWithUserData[]>([])
   const [loadingSources, setLoadingSources] = useState(false)
 
   const handleAddSource = (newSource: any) => {
@@ -188,10 +190,8 @@ export function Sidebar() {
                     key={source.id}
                     className="flex items-center justify-between p-3 rounded-xl glass hover:bg-accent/30 hover-lift-subtle transition-colors cursor-pointer group"
                     onClick={() => {
-                      // Redirigir a la página principal con el filtro de fuente
-                      const params = new URLSearchParams()
-                      params.set('source', source.id)
-                      window.location.href = `/?${params.toString()}`
+                      // Navegar dinámicamente sin recarga
+                      router.push(`/?source=${source.id}`)
                     }}
                   >
                     <div className="flex items-center gap-3 flex-1 min-w-0">

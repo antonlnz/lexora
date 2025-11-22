@@ -9,11 +9,12 @@ import { AdvancedFilters, type FilterState } from "@/components/advanced-filters
 import { AddSourceDialog } from "@/components/add-source-dialog"
 import { LayoutGrid, List, RefreshCw, Loader2, Plus } from "lucide-react"
 import { useInfiniteScroll } from "@/hooks/use-infinite-scroll"
+import { usePullToLoad } from "@/hooks/use-pull-to-load"
 import { useSubscription } from "@/contexts/subscription-context"
 import { useAuth } from "@/contexts/auth-context"
 import { articleService } from "@/lib/services/article-service"
-import { sourceService } from "@/lib/services/source-service"
-import type { ArticleWithUserData, Source } from "@/types/database"
+import { sourceService, type SourceWithUserData } from "@/lib/services/source-service"
+import type { ArticleWithUserData } from "@/types/database"
 
 export function ContentFeed() {
   const { isAuthenticated, isLoading: authLoading } = useAuth()
@@ -25,10 +26,11 @@ export function ContentFeed() {
   const [displayedItems, setDisplayedItems] = useState(6) // Start with 6 items
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [articles, setArticles] = useState<ArticleWithUserData[]>([])
-  const [sources, setSources] = useState<Source[]>([])
+  const [sources, setSources] = useState<SourceWithUserData[]>([])
   const [isSyncing, setIsSyncing] = useState(false)
   const [isSyncingOlder, setIsSyncingOlder] = useState(false)
   const [syncProgress, setSyncProgress] = useState({ current: 0, total: 0 })
+  const [syncOlderProgress, setSyncOlderProgress] = useState({ current: 0, total: 0 })
   const itemsPerPage = 6
 
   const [filters, setFilters] = useState<FilterState>({
@@ -118,30 +120,43 @@ export function ContentFeed() {
       const userSources = await sourceService.getUserSources(true)
       setSyncProgress({ current: 0, total: userSources.length })
       
-      // Sincronizar fuente por fuente y actualizar la lista en tiempo real
-      for (let i = 0; i < userSources.length; i++) {
-        const source = userSources[i]
-        
-        // Actualizar progreso
-        setSyncProgress({ current: i + 1, total: userSources.length })
-        
-        // Sincronizar esta fuente específica
-        try {
-          const response = await fetch('/api/feeds/refresh', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ sourceId: source.id }),
-          })
+      // Iniciar un intervalo para actualizar artículos cada 2 segundos durante la sincronización
+      const refreshInterval = setInterval(async () => {
+        //console.log('🔄 Actualizando artículos durante sincronización...')
+        await loadArticles()
+      }, 2000)
+      
+      try {
+        // Sincronizar fuente por fuente
+        for (let i = 0; i < userSources.length; i++) {
+          const source = userSources[i]
           
-          if (response.ok) {
-            // Recargar artículos después de cada fuente para mostrar progreso
-            await loadArticles()
+          // Actualizar progreso
+          setSyncProgress({ current: i + 1, total: userSources.length })
+          
+          // Sincronizar esta fuente específica
+          try {
+            console.log(`Syncing source ${source.id} (${i + 1} of ${userSources.length})`)
+            const response = await fetch('/api/feeds/refresh', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ sourceId: source.id }),
+            })
+            
+            if (!response.ok) {
+              console.error(`Error syncing source ${source.id}:`, response.status)
+            }
+          } catch (error) {
+            console.error(`Error syncing source ${source.id}:`, error)
           }
-        } catch (error) {
-          console.error(`Error syncing source ${source.id}:`, error)
         }
+      } finally {
+        // Detener el intervalo de actualización
+        clearInterval(refreshInterval)
+        // Una última actualización para asegurar que tenemos todos los artículos
+        await loadArticles()
       }
       
     } catch (error) {
@@ -169,7 +184,7 @@ export function ContentFeed() {
       
       const data = await response.json()
       if (data.totalArticlesAdded > 0) {
-        console.log(`Synced ${data.totalArticlesAdded} new articles`)
+        // console.log(`Synced ${data.totalArticlesAdded} new articles`)
       }
     } catch (error) {
       // Silently fail - user might not have sources yet
@@ -200,10 +215,12 @@ export function ContentFeed() {
 
   const loadArticles = async () => {
     try {
+      // console.log('Loading articles...')
       // Usar getArticlesWithUserData sin filtro de tiempo para cargar todos los artículos
       const fetchedArticles = await articleService.getArticlesWithUserData({
         limit: 100 // Cargar más artículos para tener mejor contexto
       })
+      //console.log(`Loaded ${fetchedArticles.length} articles`)
       setArticles(fetchedArticles)
     } catch (error) {
       console.error('Error loading articles:', error)
@@ -231,38 +248,86 @@ export function ContentFeed() {
       // Si hay filtro de fuente específico, sincronizar solo esas fuentes
       const sourceIdsToSync = filters.sources.length > 0 ? filters.sources : []
       
-      if (sourceIdsToSync.length > 0) {
-        // Sincronizar cada fuente seleccionada
-        for (const sourceId of sourceIdsToSync) {
-          await fetch('/api/feeds/sync-older', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ sourceId }),
-          })
+      // Iniciar un intervalo para actualizar artículos cada 2 segundos durante la sincronización
+      const refreshInterval = setInterval(async () => {
+        //console.log('🔄 Actualizando artículos durante sincronización (older entries)...')
+        await loadArticles()
+      }, 2000)
+      
+      try {
+        if (sourceIdsToSync.length > 0) {
+          // Sincronizar cada fuente seleccionada
+          // console.log('Syncing specific sources:', sourceIdsToSync)
+          setSyncOlderProgress({ current: 0, total: sourceIdsToSync.length })
+          
+          for (let i = 0; i < sourceIdsToSync.length; i++) {
+            const sourceId = sourceIdsToSync[i]
+            setSyncOlderProgress({ current: i + 1, total: sourceIdsToSync.length })
+            
+            const response = await fetch('/api/feeds/sync-older', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ sourceId }),
+            })
+            
+            if (!response.ok) {
+              console.error('Error syncing source:', sourceId, response.status)
+            } else {
+              const data = await response.json()
+              // console.log('Source synced:', sourceId, data)
+            }
+          }
+        } else {
+          // Sincronizar todas las fuentes una por una
+          // console.log('Syncing all sources (older entries)')
+          const userSources = await sourceService.getUserSources(true)
+          setSyncOlderProgress({ current: 0, total: userSources.length })
+          
+          for (let i = 0; i < userSources.length; i++) {
+            const source = userSources[i]
+            setSyncOlderProgress({ current: i + 1, total: userSources.length })
+            
+            const response = await fetch('/api/feeds/sync-older', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ sourceId: source.id }),
+            })
+            
+            if (!response.ok) {
+              console.error('Error syncing source:', source.id, response.status)
+            } else {
+              const data = await response.json()
+              // console.log('Source synced:', source.id, data)
+            }
+          }
         }
-      } else {
-        // Sincronizar todas las fuentes
-        await fetch('/api/feeds/sync-older', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({}),
-        })
+      } finally {
+        // Detener el intervalo de actualización
+        clearInterval(refreshInterval)
+        // Una última actualización para asegurar que tenemos todos los artículos
+        await loadArticles()
       }
       
-      // Recargar artículos después de sincronizar
-      await loadArticles()
       // Resetear los items mostrados para que se vea la actualización
       setDisplayedItems(6)
     } catch (error) {
       console.error('Error syncing older entries:', error)
     } finally {
       setIsSyncingOlder(false)
+      setSyncOlderProgress({ current: 0, total: 0 })
     }
   }
+
+  // Pull-to-load para cargar entradas anteriores
+  const { pullDistance, isPulling, progress, isTriggered } = usePullToLoad({
+    touchThreshold: 120,
+    onTrigger: handleSyncOlderEntries,
+    isLoading: isSyncingOlder
+  })
 
   const handleOpenViewer = (content: any, cardElement: HTMLElement) => {
     const rect = cardElement.getBoundingClientRect()
@@ -501,6 +566,32 @@ export function ContentFeed() {
         </div>
       )}
 
+      {/* Indicador de sincronización de entradas antiguas */}
+      {isSyncingOlder && syncOlderProgress.total > 0 && (
+        <div className="glass rounded-lg p-4 border-2 border-primary/20">
+          <div className="flex items-center gap-3">
+            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <div className="flex-1">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-medium">Syncing older entries...</p>
+                <p className="text-sm text-muted-foreground">
+                  {syncOlderProgress.current} of {syncOlderProgress.total}
+                </p>
+              </div>
+              <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                <div 
+                  className="bg-primary h-full transition-all duration-300 ease-out"
+                  style={{ width: `${(syncOlderProgress.current / syncOlderProgress.total) * 100}%` }}
+                />
+              </div>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground mt-2">
+            Fetching articles older than 24 hours from your sources
+          </p>
+        </div>
+      )}
+
       {filteredAndSortedContent.length === 0 ? (
         <div className="text-center py-12">
           <div className="text-muted-foreground">
@@ -572,11 +663,91 @@ export function ContentFeed() {
       )}
 
       {!hasNextPage && filteredAndSortedContent.length > 0 && (
-        <div className="text-center py-8">
+        <div className="text-center py-8 relative">
           <div className="text-muted-foreground text-sm">
             You've reached the end of your content feed, no endless scrolling here.
           </div>
           <div className="mx-auto mt-4 text-6xl opacity-50">✅</div>
+          
+          {/* Pull-to-load indicator (funciona en mobile y desktop) */}
+          {(isPulling || isTriggered || isSyncingOlder) ? (
+            <div className="mt-6 flex flex-col items-center gap-3">
+              <div className="relative">
+                {/* Círculo de progreso */}
+                <svg className="w-16 h-16 transform -rotate-90">
+                  <circle
+                    cx="32"
+                    cy="32"
+                    r="28"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                    fill="none"
+                    className="text-muted opacity-20"
+                  />
+                  <circle
+                    cx="32"
+                    cy="32"
+                    r="28"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                    fill="none"
+                    strokeDasharray={`${2 * Math.PI * 28}`}
+                    strokeDashoffset={`${2 * Math.PI * 28 * (1 - progress / 100)}`}
+                    className="text-primary transition-all duration-300"
+                    strokeLinecap="round"
+                  />
+                </svg>
+                {!isSyncingOlder && !isTriggered && (
+                  <div className="absolute inset-0 flex items-center justify-center text-sm font-semibold">
+                    {Math.round(progress)}%
+                  </div>
+                )}
+                {(isSyncingOlder || isTriggered) && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  </div>
+                )}
+              </div>
+              
+              <div className="text-sm font-medium">
+                {isSyncingOlder ? (
+                  <>
+                    <div className="animate-pulse">Loading older entries...</div>
+                    {syncOlderProgress.total > 0 && (
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {syncOlderProgress.current} / {syncOlderProgress.total} sources
+                      </div>
+                    )}
+                  </>
+                ) : isTriggered ? (
+                  "Fetching older entries..."
+                ) : isPulling ? (
+                  <span className="hidden md:inline">Scroll down to load older entries</span>
+                ) : null}
+                {isPulling && (
+                  <span className="md:hidden">Pull to load older entries</span>
+                )}
+              </div>
+            </div>
+          ) : (
+            /* Botón alternativo cuando no está en pull mode */
+            <div className="mt-6">
+              <Button 
+                onClick={handleSyncOlderEntries} 
+                disabled={isSyncingOlder}
+                variant="outline"
+                size="lg"
+                className="glass hover-lift-subtle"
+              >
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Load older entries
+              </Button>
+              <p className="text-xs text-muted-foreground mt-2">
+                Articles older than 24 hours
+                <span className="hidden md:inline"> • Or drag down to pull-to-load</span>
+              </p>
+            </div>
+          )}
         </div>
       )}
 

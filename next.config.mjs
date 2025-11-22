@@ -1,8 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   typescript: {
-    // TODO: Cambiar a false antes de producción y resolver errores de TypeScript
-    ignoreBuildErrors: true,
+    // Deshabilitado para producción - todos los errores deben resolverse
+    ignoreBuildErrors: false,
   },
   images: {
     remotePatterns: [
@@ -16,10 +16,6 @@ const nextConfig = {
         protocol: 'https',
         hostname: '**',
       },
-      {
-        protocol: 'http',
-        hostname: '**',
-      },
     ],
   },
   // Headers de seguridad
@@ -29,8 +25,8 @@ const nextConfig = {
         source: '/:path*',
         headers: [
           {
-            key: 'X-Frame-Options',
-            value: 'DENY',
+            key: 'Content-Security-Policy',
+            value: "frame-ancestors 'self'; frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com;",
           },
           {
             key: 'X-Content-Type-Options',
@@ -43,6 +39,14 @@ const nextConfig = {
           {
             key: 'X-XSS-Protection',
             value: '1; mode=block',
+          },
+          {
+            key: 'Permissions-Policy',
+            value: 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
+          },
+          {
+            key: 'Strict-Transport-Security',
+            value: 'max-age=31536000; includeSubDomains',
           },
         ],
       },

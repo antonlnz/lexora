@@ -1,6 +1,11 @@
 import { createClient } from '@/lib/supabase/client'
+import { userSettingsService } from './user-settings-service'
 import type { Profile, ProfileUpdate } from '@/types/database'
 
+/**
+ * ProfileService - Actualizado para usar el nuevo esquema
+ * Ahora delega las configuraciones a UserSettingsService
+ */
 export class ProfileService {
   private getClient() {
     return createClient()
@@ -78,25 +83,36 @@ export class ProfileService {
 
   /**
    * Actualiza las preferencias de lectura
+   * @deprecated Use userSettingsService.updateViewerSettings() and updateInterfaceSettings() instead
    */
   async updateReadingPreferences(preferences: {
     reading_speed?: number
     font_size?: string
     theme_preference?: string
   }): Promise<void> {
-    const supabase = this.getClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    
+    const { data: { user } } = await this.getClient().auth.getUser()
     if (!user) return
 
-    const { error } = await supabase
-      .from('profiles')
-      .update(preferences)
-      .eq('id', user.id)
+    // Separar las preferencias entre viewer settings e interface settings
+    const viewerUpdates: any = {}
+    const interfaceUpdates: any = {}
 
-    if (error) {
-      console.error('Error updating reading preferences:', error)
-      throw error
+    if (preferences.reading_speed !== undefined) {
+      viewerUpdates.reading_speed = preferences.reading_speed
+    }
+    if (preferences.font_size !== undefined) {
+      viewerUpdates.font_size = preferences.font_size
+    }
+    if (preferences.theme_preference !== undefined) {
+      interfaceUpdates.theme_preference = preferences.theme_preference
+    }
+
+    // Actualizar en las tablas correspondientes
+    if (Object.keys(viewerUpdates).length > 0) {
+      await userSettingsService.updateViewerSettings(user.id, viewerUpdates)
+    }
+    if (Object.keys(interfaceUpdates).length > 0) {
+      await userSettingsService.updateInterfaceSettings(user.id, interfaceUpdates)
     }
   }
 }
