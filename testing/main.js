@@ -1,6 +1,6 @@
 const Parser = require('rss-parser');
 const { Readability } = require('@mozilla/readability');
-const { JSDOM } = await import("jsdom");
+const { JSDOM } = require('jsdom');
 
 const parser = new Parser();
 
