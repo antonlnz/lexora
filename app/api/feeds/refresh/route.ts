@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { RSSService } from '@/lib/services/rss-service'
+import { sourceSyncService, getHandler } from '@/lib/source-handlers'
 import type { SourceWithUserData } from '@/lib/services/source-service'
 
 export async function POST(request: Request) {
@@ -17,9 +17,6 @@ export async function POST(request: Request) {
       )
     }
 
-    // Crear instancia del servicio con el cliente del servidor
-    const rssServiceWithServerClient = new RSSService(supabase)
-
     // Obtener sourceId opcional del body
     let sourceId: string | undefined
     try {
@@ -32,26 +29,7 @@ export async function POST(request: Request) {
     // Si se proporciona sourceId, sincronizar solo esa fuente
     if (sourceId) {
       try {
-        // console.log(`[REFRESH] Attempting to sync source: ${sourceId} for user: ${user.id}`)
-        
-        // Primero verificar si la fuente existe sin filtro de is_active
-        const { data: checkSource, error: checkError } = await supabase
-          .from('user_sources')
-          .select(`
-            *,
-            source:content_sources(*)
-          `)
-          .eq('user_id', user.id)
-          .eq('source_id', sourceId)
-          .single()
-
-        // console.log(`[REFRESH] Check result (without is_active filter):`, { 
-        //   hasData: !!checkSource,
-        //   isActive: checkSource?.is_active,
-        //   error: checkError 
-        // })
-        
-        // Obtener las fuentes directamente con el cliente del servidor
+        // Obtener la fuente directamente
         const { data: userSourcesData, error: sourcesError } = await supabase
           .from('user_sources')
           .select(`
@@ -62,22 +40,8 @@ export async function POST(request: Request) {
           .eq('source_id', sourceId)
           .single()
 
-        // console.log(`[REFRESH] Query result:`, { 
-        //   hasData: !!userSourcesData, 
-        //   error: sourcesError,
-        //   sourceId 
-        // })
-
         if (sourcesError || !userSourcesData) {
           console.error(`[REFRESH] Error fetching source ${sourceId}:`, sourcesError)
-          
-          // Intentar obtener todas las fuentes del usuario para debug
-          const { data: allSources } = await supabase
-            .from('user_sources')
-            .select('source_id, is_active')
-            .eq('user_id', user.id)
-          
-          console.error(`[REFRESH] User has ${allSources?.length || 0} sources:`, allSources)
           
           return NextResponse.json(
             { error: 'Source not found or not active' },
@@ -102,18 +66,19 @@ export async function POST(request: Request) {
           }
         } as SourceWithUserData
 
-        // Solo sincronizar si es RSS
-        if (source.source_type !== 'rss') {
-          // console.log(`Skipping non-RSS source: ${sourceId} (type: ${source.source_type})`)
+        // Verificar si hay un handler para este tipo de fuente
+        const handler = getHandler(source.source_type)
+        if (!handler) {
           return NextResponse.json({
             success: true,
-            message: 'Not an RSS source, skipped',
+            message: `No handler for source type: ${source.source_type}`,
             articlesAdded: 0,
             articlesUpdated: 0,
           })
         }
 
-        const result = await rssServiceWithServerClient.syncFeedArticles(source)
+        // Usar el servicio unificado de sincronización
+        const result = await sourceSyncService.syncSource(source, supabase)
 
         return NextResponse.json({
           success: result.success,
@@ -131,7 +96,33 @@ export async function POST(request: Request) {
     }
 
     // Sincronizar todos los feeds del usuario
-    const result = await rssServiceWithServerClient.syncUserFeeds(user.id)
+    // Obtener todas las fuentes activas
+    const { data: userSourcesData, error: sourcesError } = await supabase
+      .from('user_sources')
+      .select(`
+        *,
+        source:content_sources(*)
+      `)
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+
+    if (sourcesError) {
+      console.error('Error fetching user sources:', sourcesError)
+      return NextResponse.json(
+        { error: 'Error fetching sources' },
+        { status: 500 }
+      )
+    }
+
+    // Filtrar solo fuentes con handler disponible y transformar
+    const sources = (userSourcesData || [])
+      .filter((item: any) => item.source && getHandler(item.source.source_type))
+      .map((item: any) => ({
+        ...item.source,
+        user_source: item
+      }))
+
+    const result = await sourceSyncService.syncSources(sources, supabase)
 
     return NextResponse.json({
       success: true,

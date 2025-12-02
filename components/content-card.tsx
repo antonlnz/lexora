@@ -6,35 +6,30 @@ import { useState, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
-import { Bookmark, BookmarkCheck, Clock, ExternalLink, Play, Share, User } from "lucide-react"
-import type { ArticleWithUserData } from "@/types/database"
-import { articleService } from "@/lib/services/article-service"
+import { Bookmark, BookmarkCheck, Clock, ExternalLink, Play, Share, User, Eye, ThumbsUp } from "lucide-react"
+import { contentService, type ContentWithMetadata } from "@/lib/services/content-service"
+import { 
+  getSourceTypeIcon, 
+  getSourceTypeLabel, 
+  getSourceTypeColor,
+  getContentExcerpt,
+  getContentAuthor,
+  getContentDuration,
+  getContentThumbnail,
+  getContentMediaUrl,
+  getContentMediaType,
+  isVideoContent as checkIsVideoContent,
+  getContentViewCount,
+  getContentLikeCount,
+  formatCount,
+  formatDuration
+} from "@/lib/content-type-config"
+import type { SourceType } from "@/types/database"
 
 interface ContentCardProps {
-  article: ArticleWithUserData
+  article: ContentWithMetadata
   viewMode: "grid" | "list"
-  onOpenViewer?: (article: ArticleWithUserData, cardElement: HTMLElement) => void
-}
-
-const typeIcons: Record<string, string> = {
-  rss: "📰",
-  youtube: "🎥",
-  twitter: "🐦",
-  instagram: "📸",
-  tiktok: "🎵",
-  newsletter: "📧",
-  website: "🌐",
-}
-
-const typeColors: Record<string, string> = {
-  news: "bg-blue-500/10 text-blue-600 border-blue-500/20",
-  rss: "bg-blue-500/10 text-blue-600 border-blue-500/20",
-  youtube: "bg-red-500/10 text-red-600 border-red-500/20",
-  twitter: "bg-sky-500/10 text-sky-600 border-sky-500/20",
-  instagram: "bg-pink-500/10 text-pink-600 border-pink-500/20",
-  tiktok: "bg-purple-500/10 text-purple-600 border-purple-500/20",
-  newsletter: "bg-green-500/10 text-green-600 border-green-500/20",
-  website: "bg-gray-500/10 text-gray-600 border-gray-500/20",
+  onOpenViewer?: (article: ContentWithMetadata, cardElement: HTMLElement) => void
 }
 
 // Función auxiliar para calcular tiempo relativo
@@ -96,11 +91,10 @@ function getYouTubeThumbnail(url: string | null | undefined): string | null {
 }
 
 // Función para determinar el thumbnail de un video
-function getVideoThumbnail(article: ArticleWithUserData): string | null {
-  // 1. Si tiene featured_thumbnail_url (nuevo schema), usarlo
-  if (article.featured_thumbnail_url) {
-    return article.featured_thumbnail_url
-  }
+function getVideoThumbnail(article: ContentWithMetadata): string | null {
+  // 1. Usar el helper centralizado primero
+  const thumbnail = getContentThumbnail(article)
+  if (thumbnail) return thumbnail
   
   // 2. Si es YouTube, extraer el thumbnail de la URL
   if (article.source.source_type === 'youtube_channel' || article.source.source_type === 'youtube_video') {
@@ -113,41 +107,43 @@ function getVideoThumbnail(article: ArticleWithUserData): string | null {
 }
 
 // Función para obtener la URL del video
-function getVideoUrl(article: ArticleWithUserData): string | null {
-  // 1. Si tiene featured_media_url y es de tipo video, usarlo
-  if (article.featured_media_type === 'video' && article.featured_media_url) {
-    return article.featured_media_url
+function getVideoUrl(article: ContentWithMetadata): string | null {
+  // Usar el helper centralizado
+  const mediaType = getContentMediaType(article)
+  if (mediaType === 'video') {
+    return getContentMediaUrl(article)
   }
-  
   return null
 }
 
 // Función para determinar si es contenido de video
-function isVideoContent(article: ArticleWithUserData): boolean {
-  // 1. Nuevo schema: verificar featured_media_type
-  if (article.featured_media_type === 'video') {
-    return true
-  }
+function isVideoContent(article: ContentWithMetadata): boolean {
+  return checkIsVideoContent(article)
+}
+
+// Componente unificado para mostrar el badge del tipo de fuente
+function TypeBadge({ sourceType, className = "" }: { sourceType: SourceType; className?: string }) {
+  const IconComponent = getSourceTypeIcon(sourceType)
+  const colorClass = getSourceTypeColor(sourceType)
+  const label = getSourceTypeLabel(sourceType)
   
-  // 2. Por tipo de fuente
-  if (article.source.source_type === 'youtube_channel' || 
-      article.source.source_type === 'youtube_video' || 
-      article.source.source_type === 'tiktok') {
-    return true
-  }
-  
-  return false
+  return (
+    <Badge variant="outline" className={`${colorClass} ${className}`}>
+      <IconComponent className="h-3 w-3 mr-1" />
+      {label}
+    </Badge>
+  )
 }
 
 export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProps) {
-  const [isSaved, setIsSaved] = useState(article.user_article?.is_favorite || false)
-  const [isRead, setIsRead] = useState(article.user_article?.is_read || false)
+  const [isSaved, setIsSaved] = useState(article.user_content?.is_favorite || false)
+  const [isRead, setIsRead] = useState(article.user_content?.is_read || false)
   const cardRef = useRef<HTMLDivElement>(null)
 
   const handleSave = async (e: React.MouseEvent) => {
     e.stopPropagation()
     try {
-      await articleService.toggleFavorite(article.id, !isSaved)
+      await contentService.toggleFavorite(article.content_type, article.id, !isSaved)
       setIsSaved(!isSaved)
     } catch (error) {
       console.error('Error toggling favorite:', error)
@@ -158,7 +154,7 @@ export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProp
     e.stopPropagation()
     try {
       if (!isRead) {
-        await articleService.markAsRead(article.id)
+        await contentService.markAsRead(article.content_type, article.id)
       }
       setIsRead(!isRead)
     } catch (error) {
@@ -179,18 +175,27 @@ export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProp
 
   const sourceType = article.source.source_type
   const relativeTime = getRelativeTime(article.published_at)
-  const readTime = article.reading_time ? `${article.reading_time} min read` : undefined
+  const readingTime = getContentDuration(article)
+  const readTime = readingTime ? `${readingTime} min read` : undefined
   
   // Detectar si es video usando la nueva función helper
   const isVideo = isVideoContent(article)
   
   // Obtener URLs de video y thumbnail
   const videoSrc = getVideoUrl(article)
-  const posterSrc = isVideo ? getVideoThumbnail(article) : article.featured_media_url
+  const posterSrc = isVideo ? getVideoThumbnail(article) : getContentMediaUrl(article)
 
   // Para imageSrc de fallback: usar poster o placeholder
-  const imageSrc = posterSrc || "/placeholder.svg"  // Duración del video (si está disponible)
-  const videoDuration = article.featured_media_duration
+  const imageSrc = posterSrc || "/placeholder.svg"
+  // Duración del video (si está disponible)
+  const videoDuration = isVideo ? getContentDuration(article) : null
+  const videoDurationFormatted = formatDuration(videoDuration)
+  
+  // Estadísticas de video (YouTube)
+  const viewCount = getContentViewCount(article)
+  const likeCount = getContentLikeCount(article)
+  const viewCountFormatted = formatCount(viewCount)
+  const likeCountFormatted = formatCount(likeCount)
   
   // Si hay video pero no hay poster, mostrar el video con metadata para cargar el primer frame
   const showVideoWithoutPoster = isVideo && videoSrc && !posterSrc
@@ -255,10 +260,18 @@ export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProp
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-2 mb-2">
               <div className="flex items-center gap-2 flex-wrap">
-                <Badge variant="outline" className={typeColors[sourceType] || typeColors.rss}>
-                  {typeIcons[sourceType] || typeIcons.rss} {sourceType}
-                </Badge>
-                <span className="text-sm text-muted-foreground">{article.source.title}</span>
+                <TypeBadge sourceType={sourceType as SourceType} />
+                <div className="flex items-center gap-1.5">
+                  {article.source.favicon_url ? (
+                    <img 
+                      src={article.source.favicon_url} 
+                      alt="" 
+                      className="h-4 w-4 rounded-sm object-cover"
+                      onError={(e) => e.currentTarget.style.display = 'none'}
+                    />
+                  ) : null}
+                  <span className="text-sm text-muted-foreground">{article.source.title}</span>
+                </div>
               </div>
               <div className="flex items-center gap-1">
                 <Button variant="ghost" size="sm" onClick={handleSave} className="h-8 w-8 p-0 hover-lift-subtle">
@@ -271,21 +284,41 @@ export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProp
             </div>
 
             <h3 className="font-semibold text-lg mb-2 line-clamp-2 text-pretty">{article.title}</h3>
-            <p className="text-muted-foreground text-sm mb-3 line-clamp-2">{article.excerpt || "No excerpt available"}</p>
+            <p className="text-muted-foreground text-sm mb-3 line-clamp-2">{getContentExcerpt(article) || "No excerpt available"}</p>
 
             <div className="flex items-center justify-between text-sm text-muted-foreground">
-              <div className="flex items-center gap-4">
-                {article.author && (
+              <div className="flex items-center gap-4 flex-wrap">
+                {getContentAuthor(article) && (
                   <span className="flex items-center gap-1">
                     <User className="h-3 w-3" />
-                    {article.author}
+                    {getContentAuthor(article)}
                   </span>
                 )}
                 <span className="flex items-center gap-1">
                   <Clock className="h-3 w-3" />
                   {relativeTime}
                 </span>
-                {readTime && <span>{readTime}</span>}
+                {/* Para videos: mostrar duración, vistas y likes */}
+                {isVideo && videoDurationFormatted && (
+                  <span className="flex items-center gap-1">
+                    <Play className="h-3 w-3" />
+                    {videoDurationFormatted}
+                  </span>
+                )}
+                {viewCountFormatted && (
+                  <span className="flex items-center gap-1">
+                    <Eye className="h-3 w-3" />
+                    {viewCountFormatted}
+                  </span>
+                )}
+                {likeCountFormatted && (
+                  <span className="flex items-center gap-1">
+                    <ThumbsUp className="h-3 w-3" />
+                    {likeCountFormatted}
+                  </span>
+                )}
+                {/* Para artículos: mostrar tiempo de lectura */}
+                {!isVideo && readTime && <span>{readTime}</span>}
               </div>
             </div>
 
@@ -378,15 +411,23 @@ export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProp
           />
         )}
         <div className="absolute top-2 left-2">
-          <Badge variant="outline" className={`${typeColors[sourceType] || typeColors.rss} backdrop-blur-sm`}>
-            {typeIcons[sourceType] || typeIcons.rss} {sourceType}
-          </Badge>
+          <TypeBadge sourceType={sourceType as SourceType} className="backdrop-blur-sm" />
         </div>
       </div>
 
       <div className="p-4">
         <div className="flex items-start justify-between gap-2 mb-2">
-          <span className="text-sm text-muted-foreground font-medium">{article.source.title}</span>
+          <div className="flex items-center gap-1.5">
+            {article.source.favicon_url ? (
+              <img 
+                src={article.source.favicon_url} 
+                alt="" 
+                className="h-4 w-4 rounded-sm object-cover"
+                onError={(e) => e.currentTarget.style.display = 'none'}
+              />
+            ) : null}
+            <span className="text-sm text-muted-foreground font-medium">{article.source.title}</span>
+          </div>
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="sm" onClick={handleSave} className="h-8 w-8 p-0">
               {isSaved ? <BookmarkCheck className="h-4 w-4 text-primary" /> : <Bookmark className="h-4 w-4" />}
@@ -398,15 +439,15 @@ export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProp
         </div>
 
         <h3 className="font-semibold text-lg mb-2 line-clamp-2 text-pretty">{article.title}</h3>
-        <p className="text-muted-foreground text-sm mb-4 line-clamp-3">{article.excerpt || "No excerpt available"}</p>
+        <p className="text-muted-foreground text-sm mb-4 line-clamp-3">{getContentExcerpt(article) || "No excerpt available"}</p>
 
         <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <div className="flex items-center gap-2">
-            {article.author && (
+          <div className="flex items-center gap-2 flex-wrap">
+            {getContentAuthor(article) && (
               <>
                 <span className="flex items-center gap-1">
                   <User className="h-3 w-3" />
-                  {article.author}
+                  {getContentAuthor(article)}
                 </span>
                 <span>•</span>
               </>
@@ -414,7 +455,27 @@ export function ContentCard({ article, viewMode, onOpenViewer }: ContentCardProp
             <span>{relativeTime}</span>
           </div>
           <div className="flex items-center gap-2">
-            {readTime && <span>{readTime}</span>}
+            {/* Para videos: mostrar duración, vistas y likes */}
+            {isVideo && videoDurationFormatted && (
+              <span className="flex items-center gap-1" title="Duración">
+                <Play className="h-3 w-3" />
+                {videoDurationFormatted}
+              </span>
+            )}
+            {viewCountFormatted && (
+              <span className="flex items-center gap-1" title="Visualizaciones">
+                <Eye className="h-3 w-3" />
+                {viewCountFormatted}
+              </span>
+            )}
+            {likeCountFormatted && (
+              <span className="flex items-center gap-1" title="Me gusta">
+                <ThumbsUp className="h-3 w-3" />
+                {likeCountFormatted}
+              </span>
+            )}
+            {/* Para artículos: mostrar tiempo de lectura */}
+            {!isVideo && readTime && <span>{readTime}</span>}
           </div>
         </div>
 

@@ -12,9 +12,8 @@ import { useInfiniteScroll } from "@/hooks/use-infinite-scroll"
 import { usePullToLoad } from "@/hooks/use-pull-to-load"
 import { useSubscription } from "@/contexts/subscription-context"
 import { useAuth } from "@/contexts/auth-context"
-import { articleService } from "@/lib/services/article-service"
+import { contentService, type ContentWithMetadata } from "@/lib/services/content-service"
 import { sourceService, type SourceWithUserData } from "@/lib/services/source-service"
-import type { ArticleWithUserData } from "@/types/database"
 
 export function ContentFeed() {
   const { isAuthenticated, isLoading: authLoading } = useAuth()
@@ -25,7 +24,7 @@ export function ContentFeed() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [displayedItems, setDisplayedItems] = useState(6) // Start with 6 items
   const [isLoadingMore, setIsLoadingMore] = useState(false)
-  const [articles, setArticles] = useState<ArticleWithUserData[]>([])
+  const [articles, setArticles] = useState<ContentWithMetadata[]>([])
   const [sources, setSources] = useState<SourceWithUserData[]>([])
   const [isSyncing, setIsSyncing] = useState(false)
   const [isSyncingOlder, setIsSyncingOlder] = useState(false)
@@ -136,7 +135,7 @@ export function ContentFeed() {
           
           // Sincronizar esta fuente específica
           try {
-            console.log(`Syncing source ${source.id} (${i + 1} of ${userSources.length})`)
+            // console.log(`Syncing source ${source.id} (${i + 1} of ${userSources.length})`)
             const response = await fetch('/api/feeds/refresh', {
               method: 'POST',
               headers: {
@@ -216,8 +215,8 @@ export function ContentFeed() {
   const loadArticles = async () => {
     try {
       // console.log('Loading articles...')
-      // Usar getArticlesWithUserData sin filtro de tiempo para cargar todos los artículos
-      const fetchedArticles = await articleService.getArticlesWithUserData({
+      // Usar getContentWithUserData sin filtro de tiempo para cargar todos los artículos
+      const fetchedArticles = await contentService.getContentWithUserData({
         limit: 100 // Cargar más artículos para tener mejor contexto
       })
       //console.log(`Loaded ${fetchedArticles.length} articles`)
@@ -368,10 +367,14 @@ export function ContentFeed() {
     const filtered = articles.filter((article) => {
       if (filters.search) {
         const searchTerm = filters.search.toLowerCase()
+        // Acceso seguro a propiedades que pueden no existir en todos los tipos de contenido
+        const excerpt = 'excerpt' in article ? (article.excerpt || '') : ('description' in article ? (article.description || '') : '')
+        const author = 'author' in article ? (article.author || '') : ('channel_name' in article ? (article.channel_name || '') : '')
+        
         if (
           !article.title.toLowerCase().includes(searchTerm) &&
-          !(article.excerpt || '').toLowerCase().includes(searchTerm) &&
-          !(article.author || '').toLowerCase().includes(searchTerm) &&
+          !excerpt.toLowerCase().includes(searchTerm) &&
+          !author.toLowerCase().includes(searchTerm) &&
           !article.source.title.toLowerCase().includes(searchTerm)
         ) {
           return false
@@ -392,13 +395,14 @@ export function ContentFeed() {
       //   return false
       // }
 
-      if (filters.readStatus === "read" && !article.user_article?.is_read) return false
-      if (filters.readStatus === "unread" && article.user_article?.is_read) return false
+      if (filters.readStatus === "read" && !article.user_content?.is_read) return false
+      if (filters.readStatus === "unread" && article.user_content?.is_read) return false
 
-      if (filters.savedStatus === "saved" && !article.user_article?.is_favorite) return false
-      if (filters.savedStatus === "unsaved" && article.user_article?.is_favorite) return false
+      if (filters.savedStatus === "saved" && !article.user_content?.is_favorite) return false
+      if (filters.savedStatus === "unsaved" && article.user_content?.is_favorite) return false
 
-      if (article.reading_time) {
+      // Filtro de tiempo de lectura solo para contenido RSS que tiene esta propiedad
+      if ('reading_time' in article && article.reading_time) {
         if (article.reading_time < filters.readTimeRange[0] || article.reading_time > filters.readTimeRange[1]) {
           return false
         }
@@ -487,7 +491,7 @@ export function ContentFeed() {
             {filteredAndSortedContent.length > 0 ? (
               <>
                 {displayedContent.length} of {filteredAndSortedContent.length} items •{" "}
-                {articles.filter((article) => !article.user_article?.is_read).length} unread
+                {articles.filter((article) => !article.user_content?.is_read).length} unread
               </>
             ) : isSyncing ? (
               <>Syncing your sources...</>

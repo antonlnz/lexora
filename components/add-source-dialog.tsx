@@ -10,7 +10,6 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import {
-  Newspaper,
   Youtube,
   Twitter,
   Instagram,
@@ -22,6 +21,7 @@ import {
   CheckCircle,
   AlertCircle,
   Loader2,
+  Headphones,
 } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
@@ -29,6 +29,10 @@ import { sourceService } from "@/lib/services/source-service"
 import { useSubscription } from "@/contexts/subscription-context"
 import { useIsMobile } from "@/hooks/use-mobile"
 import type { SourceType } from "@/types/database"
+import { 
+  detectSourceType as detectSourceTypeFromUrl, 
+  getYoutubeRssFeedUrl,
+} from "@/lib/source-handlers/client"
 
 interface AddSourceDialogProps {
   open: boolean
@@ -44,7 +48,7 @@ function mapUITypeToDBType(uiType: UISourceType, url: string): SourceType {
   switch (uiType) {
     case "youtube":
       // Detect if it's a channel or video
-      if (url.includes('/watch?v=') || url.includes('youtu.be/')) {
+      if (url.includes('/watch?v=') || url.includes('youtu.be/') || url.includes('youtube.com')) {
         return 'youtube_video'
       }
       return 'youtube_channel'
@@ -61,7 +65,6 @@ const sourceTypes: {
   icon: any
   description: string
   color: string
-  examples: string[]
 }[] = [
   {
     type: "rss",
@@ -69,7 +72,6 @@ const sourceTypes: {
     icon: Rss,
     description: "RSS feeds from news websites",
     color: "bg-orange-500/10 text-orange-600 border-orange-500/20",
-    examples: ["CNN", "BBC", "TechCrunch", "The Verge"],
   },
   {
     type: "youtube",
@@ -77,7 +79,13 @@ const sourceTypes: {
     icon: Youtube,
     description: "YouTube channels and playlists",
     color: "bg-red-500/10 text-red-600 border-red-500/20",
-    examples: ["@vercel", "@fireship", "@3blue1brown"],
+  },
+  {
+    type: "podcast",
+    name: "Podcast",
+    icon: Headphones,
+    description: "Podcasts and audio feeds",
+    color: "bg-violet-500/10 text-violet-600 border-violet-500/20",
   },
   {
     type: "twitter",
@@ -85,7 +93,6 @@ const sourceTypes: {
     icon: Twitter,
     description: "Twitter profiles and lists",
     color: "bg-sky-500/10 text-sky-600 border-sky-500/20",
-    examples: ["@elonmusk", "@vercel", "@tailwindcss"],
   },
   {
     type: "instagram",
@@ -93,7 +100,6 @@ const sourceTypes: {
     icon: Instagram,
     description: "Instagram profiles",
     color: "bg-pink-500/10 text-pink-600 border-pink-500/20",
-    examples: ["@design", "@minimal", "@photography"],
   },
   {
     type: "tiktok",
@@ -101,7 +107,6 @@ const sourceTypes: {
     icon: Music2,
     description: "TikTok profiles",
     color: "bg-purple-500/10 text-purple-600 border-purple-500/20",
-    examples: ["@productivity", "@tech", "@design"],
   },
   {
     type: "newsletter",
@@ -109,7 +114,6 @@ const sourceTypes: {
     icon: Mail,
     description: "Email newsletters",
     color: "bg-green-500/10 text-green-600 border-green-500/20",
-    examples: ["Morning Brew", "The Hustle", "Design Weekly"],
   },
   {
     type: "website",
@@ -117,7 +121,6 @@ const sourceTypes: {
     icon: Globe,
     description: "Any website or blog",
     color: "bg-gray-500/10 text-gray-600 border-gray-500/20",
-    examples: ["Personal blogs", "Company blogs", "Documentation"],
   },
 ]
 
@@ -126,27 +129,40 @@ const urlPatterns = {
     /(?:youtube\.com\/(?:channel\/|c\/|user\/|@))([\w-]+)/,
     /(?:youtube\.com\/watch\?v=)([\w-]+)/,
     /(?:youtu\.be\/)([\w-]+)/,
+    /\/feeds\/videos\.xml.*[?&]channel_id=([A-Za-z0-9_-]+)/,
   ],
   instagram: [/(?:instagram\.com\/)([\w.]+)/, /(?:instagr\.am\/)([\w.]+)/],
   tiktok: [/(?:tiktok\.com\/@)([\w.]+)/, /(?:vm\.tiktok\.com\/)([\w]+)/],
   twitter: [/(?:twitter\.com\/)([\w]+)/, /(?:x\.com\/)([\w]+)/],
   rss: [/\.rss$/, /\.xml$/, /\/feed\/?$/, /\/rss\/?$/],
+  podcast: [/podcast/i, /feeds\.feedburner\.com/, /anchor\.fm/],
 }
 
-function detectSourceType(url: string): UISourceType | null {
-  const lowerUrl = url.toLowerCase()
+/**
+ * Detecta el tipo de fuente a partir de una URL (versión UI simplificada)
+ * Para detección avanzada, el sistema usa detectSourceTypeFromUrl del sistema de handlers
+ */
+function detectUISourceType(url: string): UISourceType | null {
+  try {
+    const u = new URL(url)
+    const host = u.hostname.replace(/^www\./, '').toLowerCase()
+    const path = (u.pathname + (u.search || '')).toLowerCase()
 
-  for (const [type, patterns] of Object.entries(urlPatterns)) {
-    if (patterns.some((pattern) => pattern.test(lowerUrl))) {
-      return type as UISourceType
+    // YouTube / youtu.be -> devolver "youtube" siempre para que el UI marque YouTube
+    if (host.includes('youtube.com') || host === 'youtu.be') return 'youtube'
+
+    // Comprobar patrones conocidos para otras redes
+    for (const [type, patterns] of Object.entries(urlPatterns)) {
+      for (const pattern of patterns) {
+        if (pattern.test(host + path)) return type as UISourceType
+      }
     }
-  }
 
-  // Default to website if no specific pattern matches
-  if (url.startsWith("http://") || url.startsWith("https://")) {
-    return "website"
+    // Si es URL válida, considerarla website
+    if (u.protocol === 'http:' || u.protocol === 'https:') return 'website'
+  } catch {
+    // invalid URL -> no detectar
   }
-
   return null
 }
 
@@ -206,6 +222,12 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
   const [isDetecting, setIsDetecting] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [urlValidation, setUrlValidation] = useState<{ isValid: boolean; message: string } | null>(null)
+  const [detectedFaviconUrl, setDetectedFaviconUrl] = useState<string | null>(null)
+  const [redirectWarning, setRedirectWarning] = useState<{
+    wasRedirected: boolean
+    originalHandle: string | null
+    finalHandle: string | null
+  } | null>(null)
   const [formData, setFormData] = useState({
     name: "",
     description: "",
@@ -233,17 +255,57 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
   useEffect(() => {
     if (url) {
       setIsDetecting(true)
-      const timer = setTimeout(() => {
+      const timer = setTimeout(async () => {
         const validation = validateUrl(url)
         setUrlValidation(validation)
 
         if (validation.isValid) {
-          const detectedType = detectSourceType(url)
+          const detectedType = detectUISourceType(url)
           if (detectedType) {
             setSelectedType(detectedType)
-            const suggestedName = extractSourceName(url, detectedType)
-            if (suggestedName && !formData.name) {
-              setFormData((prev) => ({ ...prev, name: suggestedName }))
+            
+            // Para YouTube, usar la detección asíncrona que obtiene el nombre real del canal
+            if (detectedType === 'youtube') {
+              try {
+                const result = await detectSourceTypeFromUrl(url)
+                if (result.suggestedTitle) {
+                  // Siempre actualizar el nombre cuando cambia la URL
+                  setFormData((prev) => ({ ...prev, name: result.suggestedTitle! }))
+                }
+                // Guardar el favicon/avatar del canal si existe
+                if (result.faviconUrl) {
+                  setDetectedFaviconUrl(result.faviconUrl)
+                } else {
+                  setDetectedFaviconUrl(null)
+                }
+                // Verificar si hubo redirección (handle secundario)
+                if (result.wasRedirected) {
+                  setRedirectWarning({
+                    wasRedirected: true,
+                    originalHandle: result.originalHandle || null,
+                    finalHandle: result.finalHandle || null,
+                  })
+                } else {
+                  setRedirectWarning(null)
+                }
+              } catch (error) {
+                console.error('Error detecting YouTube channel name:', error)
+                // Fallback al nombre extraído de la URL
+                const suggestedName = extractSourceName(url, detectedType)
+                if (suggestedName) {
+                  setFormData((prev) => ({ ...prev, name: suggestedName }))
+                }
+                setDetectedFaviconUrl(null)
+                setRedirectWarning(null)
+              }
+            } else {
+              // Para otros tipos, usar el nombre extraído de la URL
+              const suggestedName = extractSourceName(url, detectedType)
+              if (suggestedName) {
+                // Siempre actualizar el nombre cuando cambia la URL
+                setFormData((prev) => ({ ...prev, name: suggestedName }))
+              }
+              setRedirectWarning(null)
             }
           }
         }
@@ -254,6 +316,10 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
     } else {
       setUrlValidation(null)
       setSelectedType(null)
+      setDetectedFaviconUrl(null)
+      setRedirectWarning(null)
+      // Limpiar el nombre cuando se borra la URL
+      setFormData((prev) => ({ ...prev, name: "" }))
     }
   }, [url])
 
@@ -261,6 +327,8 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
     setUrl("")
     setSelectedType(null)
     setUrlValidation(null)
+    setDetectedFaviconUrl(null)
+    setRedirectWarning(null)
     setFormData({
       name: "",
       description: "",
@@ -283,16 +351,28 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
     setIsSubmitting(true)
 
     try {
-      // Obtener favicon
-      const faviconUrl = await fetchFaviconUrl(url)
+      let urlToSave = url
+      if (selectedType === "youtube") {
+        const rss = await getYoutubeRssFeedUrl(url)
+        console.log("Resolved YouTube RSS URL:", rss)
+        if (rss) {
+          urlToSave = rss
+        } else {
+          // si no se pudo resolver en cliente, opcional: llamar a un endpoint server-side
+        }
+      }
+
+      // Obtener favicon - usar el detectado para YouTube, o Google Favicon Service para otros
+      const faviconUrl = detectedFaviconUrl || await fetchFaviconUrl(url)
 
       // Map UI type to database type
       const dbType = mapUITypeToDBType(selectedType, url)
 
       // Crear o suscribirse a fuente en Supabase
+      // Usar urlToSave (URL transformada para YouTube) en lugar de url original
       await sourceService.createOrSubscribeToSource({
         title: formData.name,
-        url: url,
+        url: urlToSave,
         description: formData.description || null,
         favicon_url: faviconUrl,
         source_type: dbType,
@@ -423,6 +503,24 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
           </div>
         )}
 
+        {/* Advertencia de redirección de canal de YouTube */}
+        {redirectWarning?.wasRedirected && (
+          <div className="p-4 rounded-lg border-2 border-amber-500/50 bg-amber-500/10">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="h-5 w-5 shrink-0 mt-0.5 text-amber-600" />
+              <div className="flex-1">
+                <h3 className="font-semibold mb-1 text-amber-800 dark:text-amber-200">
+                  Secondary Channel Handle Detected
+                </h3>
+                <p className="text-sm text-amber-700 dark:text-amber-300">
+                  The handle <strong>@{redirectWarning.originalHandle}</strong> redirects to the main channel <strong>@{redirectWarning.finalHandle}</strong>. 
+                  YouTube doesn&apos;t allow subscribing to secondary handles separately - all videos will come from the main channel.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {url && urlValidation?.isValid && !selectedType && (
           <div className="space-y-3">
             <Label>Select Source Type</Label>
@@ -524,6 +622,7 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
     setUrl,
     setSelectedType,
     setFormData,
+    redirectWarning,
   ])
 
   // Renderizar Sheet en mobile, Dialog en desktop

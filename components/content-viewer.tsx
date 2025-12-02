@@ -23,9 +23,15 @@ import {
   Download,
   ExternalLink,
 } from "lucide-react"
-import type { ArticleWithUserData } from "@/types/database"
+import type { ArticleWithUserData, SourceType } from "@/types/database"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { sanitizeHTML } from "@/lib/utils/security"
+import { 
+  getSourceTypeIcon, 
+  getSourceTypeLabel, 
+  getSourceTypeColor,
+  extractYouTubeVideoId
+} from "@/lib/content-type-config"
 
 interface ContentViewerProps {
   content: ArticleWithUserData | null
@@ -36,28 +42,6 @@ interface ContentViewerProps {
   onNavigatePrevious?: () => void
   hasNext?: boolean
   hasPrevious?: boolean
-}
-
-const typeIcons = {
-  news: "📰",
-  rss: "📰",
-  youtube: "🎥",
-  twitter: "🐦",
-  instagram: "📸",
-  tiktok: "🎵",
-  newsletter: "📧",
-  website: "🌐",
-}
-
-const typeColors = {
-  news: "bg-blue-500/10 text-blue-600 border-blue-500/20",
-  rss: "bg-blue-500/10 text-blue-600 border-blue-500/20",
-  youtube: "bg-red-500/10 text-red-600 border-red-500/20",
-  twitter: "bg-sky-500/10 text-sky-600 border-sky-500/20",
-  instagram: "bg-pink-500/10 text-pink-600 border-pink-500/20",
-  tiktok: "bg-purple-500/10 text-purple-600 border-purple-500/20",
-  newsletter: "bg-green-500/10 text-green-600 border-green-500/20",
-  website: "bg-gray-500/10 text-gray-600 border-gray-500/20",
 }
 
 // Función para detectar si una URL es un video
@@ -105,14 +89,33 @@ function getYouTubeVideoId(url: string | null | undefined): string | null {
 
 // Helper function to normalize article data from database
 function normalizeContent(article: ArticleWithUserData) {
+  // Determinar el autor según el tipo de contenido
+  // Para YouTube el campo es channel_name, para RSS es author
+  const sourceType = article.source.source_type
+  let author = 'Unknown'
+  if (sourceType === 'youtube_channel' || sourceType === 'youtube_video') {
+    // Para YouTube, el campo channel_name está en el artículo
+    author = (article as any).channel_name || 'Unknown'
+  } else {
+    author = article.author || 'Unknown'
+  }
+
+  // Determinar excerpt/descripción
+  let excerpt = ''
+  if (sourceType === 'youtube_channel' || sourceType === 'youtube_video') {
+    excerpt = (article as any).description || ''
+  } else {
+    excerpt = article.excerpt || ''
+  }
+
   return {
     id: article.id,
-    type: article.source.source_type,
+    type: sourceType,
     title: article.title,
-    excerpt: article.excerpt || '',
+    excerpt,
     content: article.content || '',
     source: article.source.title,
-    author: article.author || 'Unknown',
+    author,
     publishedAt: article.published_at ? new Date(article.published_at).toLocaleDateString() : 'Unknown',
     url: article.url,
     readTime: article.reading_time ? `${article.reading_time} min read` : undefined,
@@ -122,11 +125,28 @@ function normalizeContent(article: ArticleWithUserData) {
       : (article.featured_thumbnail_url || article.image_url || '/placeholder.svg'),
     isRead: article.user_article?.is_read || false,
     isSaved: article.user_article?.is_favorite || false,
-    // Datos de video: usar las nuevas columnas
-    videoUrl: article.featured_media_type === 'video' ? article.featured_media_url : null,
-    videoDuration: article.featured_media_duration,
+    // Datos de video: para YouTube usar article.url, para otros usar featured_media_url
+    videoUrl: (sourceType === 'youtube_channel' || sourceType === 'youtube_video') 
+      ? article.url 
+      : (article.featured_media_type === 'video' ? article.featured_media_url : null),
+    videoDuration: (article as any).duration || article.featured_media_duration,
     mediaType: article.featured_media_type,
+    isYouTube: sourceType === 'youtube_channel' || sourceType === 'youtube_video',
   }
+}
+
+// Componente unificado para mostrar el badge del tipo de fuente
+function TypeBadge({ sourceType, className = "" }: { sourceType: SourceType; className?: string }) {
+  const IconComponent = getSourceTypeIcon(sourceType)
+  const colorClass = getSourceTypeColor(sourceType)
+  const label = getSourceTypeLabel(sourceType)
+  
+  return (
+    <Badge variant="outline" className={`${colorClass} ${className}`}>
+      <IconComponent className="h-3 w-3 mr-1" />
+      {label}
+    </Badge>
+  )
 }
 
 export function ContentViewer({ content, isOpen, onClose, cardPosition, onNavigateNext, onNavigatePrevious, hasNext = false, hasPrevious = false }: ContentViewerProps) {
@@ -805,179 +825,281 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
               )}
             </AnimatePresence>
 
-            {/* Scrollable Content */}
-            <motion.div
-              ref={contentRef}
-              className="h-full overflow-y-auto pt-8 pb-32 px-4 select-text"
-              style={{
-                color: isDarkMode ? "#ffffff" : textColor,
-              }}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.25, duration: 0.4 }}
-            >
-              <article
-                className="mx-auto transition-all duration-300 select-text"
-                style={{
-                  maxWidth: `${maxWidth}px`,
-                  fontSize: `${fontSize}px`,
-                  lineHeight: lineHeight,
-                  fontFamily:
-                    fontFamily === "inter"
-                      ? "var(--font-inter)"
-                      : fontFamily === "playfair"
-                        ? "var(--font-playfair)"
-                        : fontFamily === "mono"
-                          ? "monospace"
-                          : "serif",
-                }}
-              >
-                {/* Article Header */}
-                <header className="mb-8">
-                  {/* Espacio vertical para el botón de cerrar en mobile */}
-                  <div className="h-12 md:hidden" />
-                  
-                  <h1 className="text-4xl font-bold mb-4 text-balance leading-tight">{normalizedContent.title}</h1>
-
-                  <div className="flex items-center gap-2 mb-4">
-                  <Badge variant="outline" className={typeColors[normalizedContent.type as keyof typeof typeColors] || typeColors.website}>
-                    {typeIcons[normalizedContent.type as keyof typeof typeIcons] || typeIcons.website} {normalizedContent.type}
-                  </Badge>
-                  <span className="text-sm opacity-70">{normalizedContent.source}</span>
-                  </div>
-                  
-                  <div className="flex items-center gap-4 text-sm opacity-70 mb-6">
-                  <span className="flex items-center gap-1">
-                    <User className="h-3 w-3" />
-                    {normalizedContent.author}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Clock className="h-3 w-3" />
-                    {normalizedContent.publishedAt}
-                  </span>
-                  {normalizedContent.readTime && <span>{normalizedContent.readTime}</span>}
-                  </div>
-
-                  {/* Featured Image or Video */}
-                  <div 
-                    ref={videoContainerRef}
-                    className={`relative rounded-lg overflow-hidden mb-8 bg-muted ${
-                      mediaAspectRatio !== null
-                        ? isMediaVertical
-                          ? 'aspect-[9/16] max-h-[80vh]'
-                          : 'aspect-video'
-                        : 'aspect-video'
-                    }`}
+            {/* Content Area - Different layout for YouTube vs other content */}
+            {(() => {
+              // Detectar YouTube por el tipo de fuente O por el URL del video
+              const youtubeId = getYouTubeVideoId(normalizedContent.videoUrl) || getYouTubeVideoId(normalizedContent.url)
+              const isYouTubeContent = normalizedContent.isYouTube || !!youtubeId
+              
+              if (isYouTubeContent && youtubeId) {
+                // YouTube Layout: Video fijo arriba, metadata debajo, descripción scrollable
+                return (
+                  <motion.div
+                    className="h-full flex flex-col"
                     style={{
-                      ...(mediaAspectRatio !== null && isMediaVertical
-                        ? { maxWidth: '100%', width: 'auto', margin: '0 auto' }
-                        : {})
+                      color: isDarkMode ? "#ffffff" : textColor,
                     }}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.25, duration: 0.4 }}
                   >
-                  {(() => {
-                    const youtubeId = getYouTubeVideoId(normalizedContent.videoUrl)
-                    
-                    if (youtubeId) {
-                    return (
-                      <iframe
-                      src={`https://www.youtube-nocookie.com/embed/${youtubeId}?rel=0&modestbranding=1`}
-                      title={normalizedContent.title}
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                      allowFullScreen
-                      className="absolute inset-0 w-full h-full"
-                      />
-                    )
-                    } else if (hasVideo && videoPlayUrl) {
-                    return (
-                      <div className="relative w-full h-full group">
-                        {/* Thumbnail como fondo */}
-                        {videoThumbnail && (
-                          <img
-                            src={videoThumbnail}
-                            alt={normalizedContent.title}
-                            className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${isVideoPlaying ? 'opacity-0' : 'opacity-100'}`}
-                            onLoad={(e) => {
-                              const img = e.currentTarget
-                              const aspectRatio = img.naturalWidth / img.naturalHeight
-                              setMediaAspectRatio(aspectRatio)
-                              setIsMediaVertical(aspectRatio < 1)
-                            }}
-                          />
-                        )}
-                        
-                        {/* Botón de Play antes de reproducir */}
-                        {showPlayButton && (
-                          <button
-                            onClick={() => videoRef.current?.play()}
-                            className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[2px] transition-all duration-300 hover:bg-black/40 z-10"
-                          >
-                            <div className="bg-white/95 rounded-full p-6 shadow-2xl transform transition-transform hover:scale-110">
-                              <Play className="h-12 w-12 text-black fill-black" />
-                            </div>
-                          </button>
-                        )}
+                    {/* Video flotante con márgenes y sombra */}
+                    <div className="shrink-0 w-full pt-16 px-4 pb-4">
+                      <div 
+                        ref={videoContainerRef}
+                        className="relative w-full aspect-video max-h-[50vh] rounded-xl overflow-hidden shadow-lg ring-1 ring-white/10"
+                        style={{
+                          boxShadow: isDarkMode 
+                            ? '0 10px 40px -10px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1)' 
+                            : '0 10px 40px -10px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)'
+                        }}
+                      >
+                        <iframe
+                          src={`https://www.youtube-nocookie.com/embed/${youtubeId}?rel=0&modestbranding=1&controls=1&fs=1`}
+                          title={normalizedContent.title}
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                          allowFullScreen
+                          className="absolute inset-0 w-full h-full"
+                        />
+                      </div>
+                    </div>
 
-                        {/* Video */}
-                        <video
-                          ref={videoRef}
-                          src={videoPlayUrl}
-                          poster={videoThumbnail || undefined}
-                          controls
-                          muted={isMuted}
-                          loop
-                          playsInline
-                          className="relative w-full h-full object-contain"
-                          preload="metadata"
-                          onPlay={handleVideoPlay}
-                          onPause={handleVideoPause}
-                          onLoadedMetadata={(e) => {
-                            const video = e.currentTarget
-                            // Detectar orientación del video
-                            const aspectRatio = video.videoWidth / video.videoHeight
-                            setMediaAspectRatio(aspectRatio)
-                            setIsMediaVertical(aspectRatio < 1)
-                            if (!videoThumbnail) {
-                              video.currentTime = 0.1
-                            }
+                    {/* Contenido scrollable: metadata + descripción */}
+                    <div 
+                      ref={contentRef}
+                      className="flex-1 overflow-y-auto px-4 pb-32 select-text"
+                    >
+                      <article
+                        className="mx-auto transition-all duration-300 select-text pt-6"
+                        style={{
+                          maxWidth: `${maxWidth}px`,
+                          fontSize: `${fontSize}px`,
+                          lineHeight: lineHeight,
+                          fontFamily:
+                            fontFamily === "inter"
+                              ? "var(--font-inter)"
+                              : fontFamily === "playfair"
+                                ? "var(--font-playfair)"
+                                : fontFamily === "mono"
+                                  ? "monospace"
+                                  : "serif",
+                        }}
+                      >
+                        {/* Metadata debajo del video */}
+                        <header className="mb-6">
+                          <h1 className="text-2xl md:text-3xl font-bold mb-3 text-balance leading-tight">{normalizedContent.title}</h1>
+
+                          <div className="flex items-center gap-2 mb-3">
+                            <TypeBadge sourceType={normalizedContent.type as SourceType} />
+                            <span className="text-sm opacity-70">{normalizedContent.source}</span>
+                          </div>
+                          
+                          <div className="flex items-center gap-4 text-sm opacity-70">
+                            <span className="flex items-center gap-1">
+                              <User className="h-3 w-3" />
+                              {normalizedContent.author}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              {normalizedContent.publishedAt}
+                            </span>
+                            {normalizedContent.videoDuration && (
+                              <span>{Math.floor(normalizedContent.videoDuration / 60)}:{String(normalizedContent.videoDuration % 60).padStart(2, '0')}</span>
+                            )}
+                          </div>
+                        </header>
+
+                        <Separator className="mb-6" />
+
+                        {/* Descripción del video - preservar formato original */}
+                        <div
+                          className="max-w-none"
+                          style={{
+                            color: isDarkMode ? "#ffffff" : textColor,
+                            fontSize: `${fontSize}px`,
+                            lineHeight: lineHeight,
                           }}
                         >
-                          Tu navegador no soporta la reproducción de videos.
-                        </video>
-                      </div>
-                    )
-                    } else {
-                    return (
-                      <img
-                      src={videoThumbnail || normalizedContent.image || "/placeholder.svg"}
-                      alt={normalizedContent.title}
-                      className="absolute inset-0 w-full h-full object-contain"
-                      onLoad={(e) => {
-                        const img = e.currentTarget
-                        const aspectRatio = img.naturalWidth / img.naturalHeight
-                        setMediaAspectRatio(aspectRatio)
-                        setIsMediaVertical(aspectRatio < 1)
-                      }}
-                      />
-                    )
-                    }
-                  })()}
-                  </div>
-                </header>
-
-                <Separator className="mb-8" />
-
-                {/* Article Content */}
-                <div
-                  className="prose prose-lg max-w-none"
+                          {normalizedContent.excerpt ? (
+                            <pre 
+                              className="whitespace-pre-wrap wrap-break-words font-[inherit] m-0"
+                              style={{
+                                fontFamily: 'inherit',
+                                fontSize: 'inherit',
+                                lineHeight: 'inherit',
+                              }}
+                            >
+                              {normalizedContent.excerpt}
+                            </pre>
+                          ) : (
+                            <p className="opacity-70">No hay descripción disponible para este video.</p>
+                          )}
+                        </div>
+                      </article>
+                    </div>
+                  </motion.div>
+                )
+              }
+              
+              // Layout normal para contenido que no es YouTube
+              return (
+                <motion.div
+                  ref={contentRef}
+                  className="h-full overflow-y-auto pt-16 pb-32 px-4 select-text"
                   style={{
                     color: isDarkMode ? "#ffffff" : textColor,
-                    fontSize: `${fontSize}px`,
-                    lineHeight: lineHeight,
                   }}
-                  dangerouslySetInnerHTML={{ __html: sanitizeHTML(contentHtml) }}
-                />
-              </article>
-            </motion.div>
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.25, duration: 0.4 }}
+                >
+                  <article
+                    className="mx-auto transition-all duration-300 select-text"
+                    style={{
+                      maxWidth: `${maxWidth}px`,
+                      fontSize: `${fontSize}px`,
+                      lineHeight: lineHeight,
+                      fontFamily:
+                        fontFamily === "inter"
+                          ? "var(--font-inter)"
+                          : fontFamily === "playfair"
+                            ? "var(--font-playfair)"
+                            : fontFamily === "mono"
+                              ? "monospace"
+                              : "serif",
+                    }}
+                  >
+                    {/* Article Header */}
+                    <header className="mb-8">
+                      <h1 className="text-4xl font-bold mb-4 text-balance leading-tight">{normalizedContent.title}</h1>
+
+                      <div className="flex items-center gap-2 mb-4">
+                        <TypeBadge sourceType={normalizedContent.type as SourceType} />
+                        <span className="text-sm opacity-70">{normalizedContent.source}</span>
+                      </div>
+                      
+                      <div className="flex items-center gap-4 text-sm opacity-70 mb-6">
+                        <span className="flex items-center gap-1">
+                          <User className="h-3 w-3" />
+                          {normalizedContent.author}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {normalizedContent.publishedAt}
+                        </span>
+                        {normalizedContent.readTime && <span>{normalizedContent.readTime}</span>}
+                      </div>
+
+                      {/* Featured Image or Video */}
+                      <div 
+                        ref={videoContainerRef}
+                        className={`relative rounded-lg overflow-hidden mb-8 bg-muted ${
+                          mediaAspectRatio !== null
+                            ? isMediaVertical
+                              ? 'aspect-9/16 max-h-[80vh]'
+                              : 'aspect-video'
+                            : 'aspect-video'
+                        }`}
+                        style={{
+                          ...(mediaAspectRatio !== null && isMediaVertical
+                            ? { maxWidth: '100%', width: 'auto', margin: '0 auto' }
+                            : {})
+                        }}
+                      >
+                        {(() => {
+                          if (hasVideo && videoPlayUrl) {
+                            return (
+                              <div className="relative w-full h-full group">
+                                {/* Thumbnail como fondo */}
+                                {videoThumbnail && (
+                                  <img
+                                    src={videoThumbnail}
+                                    alt={normalizedContent.title}
+                                    className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-300 ${isVideoPlaying ? 'opacity-0' : 'opacity-100'}`}
+                                    onLoad={(e) => {
+                                      const img = e.currentTarget
+                                      const aspectRatio = img.naturalWidth / img.naturalHeight
+                                      setMediaAspectRatio(aspectRatio)
+                                      setIsMediaVertical(aspectRatio < 1)
+                                    }}
+                                  />
+                                )}
+                                
+                                {/* Botón de Play antes de reproducir */}
+                                {showPlayButton && (
+                                  <button
+                                    onClick={() => videoRef.current?.play()}
+                                    className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[2px] transition-all duration-300 hover:bg-black/40 z-10"
+                                  >
+                                    <div className="bg-white/95 rounded-full p-6 shadow-2xl transform transition-transform hover:scale-110">
+                                      <Play className="h-12 w-12 text-black fill-black" />
+                                    </div>
+                                  </button>
+                                )}
+
+                                {/* Video */}
+                                <video
+                                  ref={videoRef}
+                                  src={videoPlayUrl}
+                                  poster={videoThumbnail || undefined}
+                                  controls
+                                  muted={isMuted}
+                                  loop
+                                  playsInline
+                                  className="relative w-full h-full object-contain"
+                                  preload="metadata"
+                                  onPlay={handleVideoPlay}
+                                  onPause={handleVideoPause}
+                                  onLoadedMetadata={(e) => {
+                                    const video = e.currentTarget
+                                    // Detectar orientación del video
+                                    const aspectRatio = video.videoWidth / video.videoHeight
+                                    setMediaAspectRatio(aspectRatio)
+                                    setIsMediaVertical(aspectRatio < 1)
+                                    if (!videoThumbnail) {
+                                      video.currentTime = 0.1
+                                    }
+                                  }}
+                                >
+                                  Tu navegador no soporta la reproducción de videos.
+                                </video>
+                              </div>
+                            )
+                          } else {
+                            return (
+                              <img
+                                src={videoThumbnail || normalizedContent.image || "/placeholder.svg"}
+                                alt={normalizedContent.title}
+                                className="absolute inset-0 w-full h-full object-contain"
+                                onLoad={(e) => {
+                                  const img = e.currentTarget
+                                  const aspectRatio = img.naturalWidth / img.naturalHeight
+                                  setMediaAspectRatio(aspectRatio)
+                                  setIsMediaVertical(aspectRatio < 1)
+                                }}
+                              />
+                            )
+                          }
+                        })()}
+                      </div>
+                    </header>
+
+                    <Separator className="mb-8" />
+
+                    {/* Article Content */}
+                    <div
+                      className="prose prose-lg max-w-none"
+                      style={{
+                        color: isDarkMode ? "#ffffff" : textColor,
+                        fontSize: `${fontSize}px`,
+                        lineHeight: lineHeight,
+                      }}
+                      dangerouslySetInnerHTML={{ __html: sanitizeHTML(contentHtml) }}
+                    />
+                  </article>
+                </motion.div>
+              )
+            })()}
 
             {/* Video Flotante (Picture-in-Picture Manual) */}
             <AnimatePresence>

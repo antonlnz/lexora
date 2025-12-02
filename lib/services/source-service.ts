@@ -156,6 +156,20 @@ export class SourceService {
       if (existingSource) {
         // La fuente ya existe, usar esa
         source = existingSource
+        
+        // Actualizar favicon_url si el nuevo es mejor (no nulo y diferente)
+        if (sourceData.favicon_url && sourceData.favicon_url !== existingSource.favicon_url) {
+          const { data: updatedSource } = await supabase
+            .from('content_sources')
+            .update({ favicon_url: sourceData.favicon_url })
+            .eq('id', existingSource.id)
+            .select()
+            .single()
+          
+          if (updatedSource) {
+            source = updatedSource
+          }
+        }
       } else {
         // Crear nueva fuente
         const { data: newSource, error: sourceError } = await supabase

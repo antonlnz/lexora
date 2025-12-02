@@ -9,7 +9,7 @@ import type {
   ContentSource,
   UserSource
 } from '@/types/database'
-import { CONTENT_TYPE_TO_TABLE, type NormalizedContentWithUserData } from '@/types/content'
+import { CONTENT_TYPE_TO_TABLE, ACTIVE_CONTENT_TYPES, ALL_CONTENT_TYPES, type NormalizedContentWithUserData } from '@/types/content'
 
 // Tipo unificado para contenido con metadatos
 export type ContentWithMetadata = (RSSContent | YouTubeContent) & {
@@ -25,9 +25,9 @@ export class ContentService {
   }
 
   /**
-   * Obtiene contenido con datos de usuario para un tipo específico
+   * Obtiene contenido con datos de usuario para un tipo específico o todos los tipos
    */
-  async getContentWithUserData(options: {
+  async getContentWithUserData(options?: {
     contentType?: ContentType
     limit?: number
     offset?: number
@@ -41,7 +41,53 @@ export class ContentService {
     
     if (!user) return []
 
-    const contentType = options.contentType || 'rss'
+    // Si se especifica un tipo, obtener solo ese tipo
+    if (options?.contentType) {
+      return this.getContentForType(options.contentType, options)
+    }
+
+    // Si no se especifica tipo, obtener todos los tipos de contenido activos
+    const allContent: ContentWithMetadata[] = []
+
+    for (const type of ACTIVE_CONTENT_TYPES) {
+      const content = await this.getContentForType(type, options)
+      allContent.push(...content)
+    }
+
+    // Ordenar todo el contenido por fecha de publicación
+    allContent.sort((a, b) => {
+      const dateA = a.published_at ? new Date(a.published_at).getTime() : 0
+      const dateB = b.published_at ? new Date(b.published_at).getTime() : 0
+      return dateB - dateA
+    })
+
+    // Aplicar límite si se especificó
+    if (options?.limit) {
+      return allContent.slice(0, options.limit)
+    }
+
+    return allContent
+  }
+
+  /**
+   * Obtiene contenido para un tipo específico
+   */
+  private async getContentForType(
+    contentType: ContentType,
+    options?: {
+      limit?: number
+      offset?: number
+      onlyUnread?: boolean
+      onlyFavorites?: boolean
+      onlyArchived?: boolean
+      sourceId?: string
+    }
+  ): Promise<ContentWithMetadata[]> {
+    const supabase = this.getClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    
+    if (!user) return []
+
     const table = CONTENT_TYPE_TO_TABLE[contentType]
 
     if (!table) {
@@ -70,15 +116,15 @@ export class ContentService {
       .in('source_id', sourceIds)
       .order('published_at', { ascending: false })
 
-    if (options.sourceId) {
+    if (options?.sourceId) {
       query = query.eq('source_id', options.sourceId)
     }
 
-    if (options.limit) {
+    if (options?.limit) {
       query = query.limit(options.limit)
     }
 
-    if (options.offset) {
+    if (options?.offset) {
       query = query.range(
         options.offset,
         options.offset + (options.limit || 10) - 1
@@ -115,15 +161,15 @@ export class ContentService {
     })) as ContentWithMetadata[]
 
     // Aplicar filtros del lado del cliente
-    if (options.onlyUnread) {
+    if (options?.onlyUnread) {
       results = results.filter(c => !c.user_content?.is_read)
     }
 
-    if (options.onlyFavorites) {
+    if (options?.onlyFavorites) {
       results = results.filter(c => c.user_content?.is_favorite)
     }
 
-    if (options.onlyArchived) {
+    if (options?.onlyArchived) {
       results = results.filter(c => c.user_content?.is_archived)
     }
 
@@ -424,10 +470,9 @@ export class ContentService {
     }
 
     // Si no, buscar en todos los tipos
-    const types: ContentType[] = ['rss', 'youtube', 'twitter', 'instagram', 'tiktok', 'podcast']
     const allContent: ContentWithMetadata[] = []
 
-    for (const type of types) {
+    for (const type of ALL_CONTENT_TYPES) {
       const content = await this.getContentWithUserData({
         contentType: type,
         onlyArchived: true
@@ -467,7 +512,7 @@ export class ContentService {
 
     const types: ContentType[] = contentType 
       ? [contentType] 
-      : ['rss', 'youtube', 'twitter', 'instagram', 'tiktok', 'podcast']
+      : ALL_CONTENT_TYPES
 
     const allResults: ContentWithMetadata[] = []
 

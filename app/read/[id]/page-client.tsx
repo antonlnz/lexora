@@ -111,7 +111,7 @@ function normalizeContent(article: ArticleWithUserData) {
   }
 }
 
-export default function ReadPageClient() {
+export default function ReadPageClient({ initialId }: { initialId?: string }) {
   const params = useParams()
   const router = useRouter()
   const contentRef = useRef<HTMLDivElement>(null)
@@ -394,16 +394,16 @@ export default function ReadPageClient() {
       }}
     >
       {/* Ambient background for multimedia content */}
-      {hasVideo && isVideoPlaying && videoRef.current ? (
+      {/* {hasVideo && isVideoPlaying && videoRef.current ? (
         <VideoAmbientBackground 
           videoElement={videoRef.current} 
           isPlaying={isVideoPlaying} 
           intensity={0.6}
           updateInterval={200}
-        />
+        /> */}
       ) : isMultimedia ? (
         <AmbientBackground imageUrl={normalizedContent.image} isActive={isPlaying} intensity={0.3} />
-      ) : null}
+      ) : null
 
       {/* Reading progress bar */}
       <div className="fixed top-0 left-0 w-full h-1 bg-border/20 z-10">

@@ -26,7 +26,7 @@ const nextConfig = {
         headers: [
           {
             key: 'Content-Security-Policy',
-            value: "frame-ancestors 'self'; frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com;",
+            value: "frame-ancestors 'self'; frame-src 'self' https://www.youtube.com/* https://www.youtube-nocookie.com;",
           },
           {
             key: 'X-Content-Type-Options',

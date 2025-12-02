@@ -55,6 +55,18 @@ export const CONTENT_TYPE_TO_TABLE: Record<ContentType, string> = {
 }
 
 /**
+ * Array con todos los tipos de contenido disponibles
+ * Útil para iterar sobre todos los tipos
+ */
+export const ALL_CONTENT_TYPES = Object.keys(CONTENT_TYPE_TO_TABLE) as ContentType[]
+
+/**
+ * Tipos de contenido actualmente implementados/soportados
+ * (excluye los que aún no tienen handler completo)
+ */
+export const ACTIVE_CONTENT_TYPES: ContentType[] = ['rss', 'youtube']
+
+/**
  * Mapea un tipo de fuente a su tipo de contenido
  */
 export const SOURCE_TYPE_TO_CONTENT_TYPE: Record<SourceType, ContentType | null> = {

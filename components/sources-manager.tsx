@@ -29,21 +29,10 @@ import {
   Plus,
   Settings,
   Trash2,
-  Newspaper,
-  Youtube,
-  Twitter,
-  Instagram,
-  Music2,
-  Mail,
-  Rss,
-  Globe,
   CheckCircle,
-  AlertCircle,
-  Check,
   Crown,
   MoreVertical,
   Ban,
-  Zap,
   Sparkles,
   Upload,
   Download,
@@ -51,42 +40,20 @@ import {
   Undo2,
 } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 import { sourceService, type SourceWithUserData } from "@/lib/services/source-service"
+import { 
+  SOURCE_TYPE_ICONS,
+  SOURCE_TYPE_LABELS,
+  SOURCE_TYPE_COLORS,
+  getSourceTypeIcon,
+  getSourceTypeLabel,
+  getSourceTypeColor,
+} from "@/lib/content-type-config"
+import type { SourceType } from "@/types/database"
 
 // Tipo actualizado para usar el nuevo esquema
 type Source = SourceWithUserData
-
-const sourceTypeIcons: Record<string, any> = {
-  rss: Rss,
-  youtube: Youtube,
-  twitter: Twitter,
-  instagram: Instagram,
-  tiktok: Music2,
-  newsletter: Mail,
-  website: Globe,
-}
-
-const sourceTypeLabels: Record<string, string> = {
-  rss: "RSS Feed",
-  youtube: "YouTube",
-  twitter: "Twitter",
-  instagram: "Instagram",
-  tiktok: "TikTok",
-  newsletter: "Newsletter",
-  website: "Website",
-}
-
-const sourceTypeColors: Record<string, string> = {
-  rss: "bg-orange-500/10 text-orange-600 border-orange-500/20",
-  youtube: "bg-red-500/10 text-red-600 border-red-500/20",
-  twitter: "bg-sky-500/10 text-sky-600 border-sky-500/20",
-  instagram: "bg-pink-500/10 text-pink-600 border-pink-500/20",
-  tiktok: "bg-purple-500/10 text-purple-600 border-purple-500/20",
-  newsletter: "bg-green-500/10 text-green-600 border-green-500/20",
-  website: "bg-gray-500/10 text-gray-600 border-gray-500/20",
-}
 
 export function SourcesManager() {
   const { canAddSource, getSourceLimit, currentPlan } = useSubscription()
@@ -459,8 +426,9 @@ function SourcesList({ sources, onToggle, onDelete, onSelect, selectedId, onUpda
   return (
     <div className="space-y-4">
       {sources.map((source) => {
-        const IconComponent = sourceTypeIcons[source.source_type] || Globe
-        const typeColorClass = sourceTypeColors[source.source_type] || sourceTypeColors.website
+        const IconComponent = getSourceTypeIcon(source.source_type as SourceType)
+        const typeColorClass = getSourceTypeColor(source.source_type as SourceType)
+        const typeLabel = getSourceTypeLabel(source.source_type as SourceType)
         const isSelected = selectedId === source.id
         
         return (
@@ -486,7 +454,7 @@ function SourcesList({ sources, onToggle, onDelete, onSelect, selectedId, onUpda
                   <div className="flex items-center gap-2 mb-1 flex-wrap">
                     <h3 className="font-semibold text-base sm:text-lg truncate">{source.title}</h3>
                     <Badge variant="outline" className={`${typeColorClass} text-xs shrink-0`}>
-                      {sourceTypeLabels[source.source_type]}
+                      {typeLabel}
                     </Badge>
                     {source.user_source.is_active && <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />}
                   </div>
@@ -573,8 +541,9 @@ function SourceSettings({ source, onUpdate, isMobile = false }: SourceSettingsPr
     onUpdate(localSource)
   }
 
-  const SelectedTypeIcon = sourceTypeIcons[localSource.source_type] || Globe
-  const typeColorClass = sourceTypeColors[localSource.source_type] || sourceTypeColors.website
+  const SelectedTypeIcon = getSourceTypeIcon(localSource.source_type as SourceType)
+  const typeColorClass = getSourceTypeColor(localSource.source_type as SourceType)
+  const typeLabel = getSourceTypeLabel(localSource.source_type as SourceType)
 
   return (
     <Card className={`glass-card p-6 ${isMobile ? '' : 'sticky top-24'}`}>
@@ -639,53 +608,25 @@ function SourceSettings({ source, onUpdate, isMobile = false }: SourceSettingsPr
               <SelectValue>
                 <div className="flex items-center gap-2">
                   <SelectedTypeIcon className="h-4 w-4" />
-                  <span>{sourceTypeLabels[localSource.source_type]}</span>
+                  <span>{typeLabel}</span>
                 </div>
               </SelectValue>
             </SelectTrigger>
             <SelectContent className="glass-card">
-              <SelectItem value="rss">
-                <div className="flex items-center gap-2">
-                  <Rss className="h-4 w-4" />
-                  <span>RSS Feed</span>
-                </div>
-              </SelectItem>
-              <SelectItem value="youtube">
-                <div className="flex items-center gap-2">
-                  <Youtube className="h-4 w-4" />
-                  <span>YouTube</span>
-                </div>
-              </SelectItem>
-              <SelectItem value="twitter">
-                <div className="flex items-center gap-2">
-                  <Twitter className="h-4 w-4" />
-                  <span>Twitter</span>
-                </div>
-              </SelectItem>
-              <SelectItem value="instagram">
-                <div className="flex items-center gap-2">
-                  <Instagram className="h-4 w-4" />
-                  <span>Instagram</span>
-                </div>
-              </SelectItem>
-              <SelectItem value="tiktok">
-                <div className="flex items-center gap-2">
-                  <Music2 className="h-4 w-4" />
-                  <span>TikTok</span>
-                </div>
-              </SelectItem>
-              <SelectItem value="newsletter">
-                <div className="flex items-center gap-2">
-                  <Mail className="h-4 w-4" />
-                  <span>Newsletter</span>
-                </div>
-              </SelectItem>
-              <SelectItem value="website">
-                <div className="flex items-center gap-2">
-                  <Globe className="h-4 w-4" />
-                  <span>Website</span>
-                </div>
-              </SelectItem>
+              {(Object.keys(SOURCE_TYPE_LABELS) as SourceType[])
+                .filter(type => !['youtube_channel', 'youtube_video'].includes(type))
+                .map((type) => {
+                  const TypeIcon = SOURCE_TYPE_ICONS[type]
+                  return (
+                    <SelectItem key={type} value={type}>
+                      <div className="flex items-center gap-2">
+                        <TypeIcon className="h-4 w-4" />
+                        <span>{SOURCE_TYPE_LABELS[type]}</span>
+                      </div>
+                    </SelectItem>
+                  )
+                })
+              }
             </SelectContent>
           </Select>
         </div>

@@ -5,8 +5,8 @@ import { Search, X, Bookmark, BookmarkCheck, Clock } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
-import { articleService } from "@/lib/services/article-service"
-import type { ArticleWithUserData } from "@/types/database"
+import { contentService, type ContentWithMetadata } from "@/lib/services/content-service"
+import { getContentThumbnail, getContentMediaUrl, getContentMediaType } from "@/lib/content-type-config"
 import Link from "next/link"
 import Image from "next/image"
 
@@ -17,7 +17,7 @@ interface SearchBarProps {
 export function SearchBar({ onClose }: SearchBarProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [query, setQuery] = useState("")
-  const [results, setResults] = useState<ArticleWithUserData[]>([])
+  const [results, setResults] = useState<ContentWithMetadata[]>([])
   const [isSearching, setIsSearching] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const searchRef = useRef<HTMLDivElement>(null)
@@ -56,7 +56,7 @@ export function SearchBar({ onClose }: SearchBarProps) {
 
       setIsSearching(true)
       try {
-        const searchResults = await articleService.searchArticles(query)
+        const searchResults = await contentService.searchContent(query)
         setResults(searchResults)
       } catch (error) {
         console.error("Error searching articles:", error)
@@ -163,7 +163,13 @@ export function SearchBar({ onClose }: SearchBarProps) {
               <div className="px-4 py-2 text-xs text-muted-foreground font-medium">
                 {results.length} {results.length === 1 ? "resultado" : "resultados"}
               </div>
-              {results.map((article) => (
+              {results.map((article) => {
+                const thumbnailUrl = getContentThumbnail(article)
+                const mediaUrl = getContentMediaUrl(article)
+                const mediaType = getContentMediaType(article)
+                const imageToShow = mediaType === 'image' ? (mediaUrl || thumbnailUrl) : thumbnailUrl
+
+                return (
                 <Link
                   key={article.id}
                   href={`/read/${article.id}`}
@@ -172,14 +178,10 @@ export function SearchBar({ onClose }: SearchBarProps) {
                 >
                   <div className="flex gap-3">
                     {/* Imagen */}
-                    {(article.featured_media_url || article.featured_thumbnail_url || article.image_url) ? (
+                    {imageToShow ? (
                       <div className="relative w-16 h-16 rounded-md overflow-hidden shrink-0 bg-muted">
                         <Image
-                          src={
-                            article.featured_media_type === 'image' 
-                              ? (article.featured_media_url || article.image_url || '/placeholder.svg')
-                              : (article.featured_thumbnail_url || article.image_url || '/placeholder.svg')
-                          }
+                          src={imageToShow || '/placeholder.svg'}
                           alt={article.title}
                           fill
                           className="object-cover"
@@ -217,28 +219,28 @@ export function SearchBar({ onClose }: SearchBarProps) {
 
                       {/* Estado */}
                       <div className="flex items-center gap-2 mt-2">
-                        {article.user_article?.is_favorite && (
+                        {article.user_content?.is_favorite && (
                           <span className="inline-flex items-center gap-1 text-xs bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 px-2 py-0.5 rounded-full">
                             <BookmarkCheck className="h-3 w-3" />
                             Guardado
                           </span>
                         )}
                         
-                        {article.user_article?.is_archived && (
+                        {article.user_content?.is_archived && (
                           <span className="inline-flex items-center gap-1 text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded-full">
                             Archivado
                           </span>
                         )}
                         
-                        {article.user_article?.is_read && (
+                        {article.user_content?.is_read && (
                           <span className="inline-flex items-center gap-1 text-xs bg-green-500/10 text-green-600 dark:text-green-400 px-2 py-0.5 rounded-full">
                             Leído
                           </span>
                         )}
 
-                        {!article.user_article?.is_read && 
-                         !article.user_article?.is_favorite && 
-                         !article.user_article?.is_archived && (
+                        {!article.user_content?.is_read && 
+                         !article.user_content?.is_favorite && 
+                         !article.user_content?.is_archived && (
                           <span className="inline-flex items-center gap-1 text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
                             Sin leer
                           </span>
@@ -247,7 +249,7 @@ export function SearchBar({ onClose }: SearchBarProps) {
                     </div>
                   </div>
                 </Link>
-              ))}
+              )})}
             </div>
           )}
         </div>
