@@ -540,7 +540,14 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
 
   const handleOpenInNewTab = () => {
     if (normalizedContent) {
-      window.open(`/read/${normalizedContent.id}`, "_blank")
+      // Usar un enlace temporal para evitar bloqueo de popups en producción
+      const link = document.createElement('a')
+      link.href = `/read/${normalizedContent.id}`
+      link.target = '_blank'
+      link.rel = 'noopener noreferrer'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
     }
   }
 
