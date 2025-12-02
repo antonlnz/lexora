@@ -394,16 +394,9 @@ export default function ReadPageClient({ initialId }: { initialId?: string }) {
       }}
     >
       {/* Ambient background for multimedia content */}
-      {/* {hasVideo && isVideoPlaying && videoRef.current ? (
-        <VideoAmbientBackground 
-          videoElement={videoRef.current} 
-          isPlaying={isVideoPlaying} 
-          intensity={0.6}
-          updateInterval={200}
-        /> */}
-      ) : isMultimedia ? (
+      {isMultimedia && (
         <AmbientBackground imageUrl={normalizedContent.image} isActive={isPlaying} intensity={0.3} />
-      ) : null
+      )}
 
       {/* Reading progress bar */}
       <div className="fixed top-0 left-0 w-full h-1 bg-border/20 z-10">
