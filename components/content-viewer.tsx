@@ -8,6 +8,8 @@ import { Separator } from "@/components/ui/separator"
 import { AmbientBackground } from "@/components/ambient-background"
 import { VideoAmbientBackground } from "@/components/video-ambient-background"
 import { DynamicIsland } from "@/components/dynamic-island"
+import { contentService, type ContentWithMetadata } from "@/lib/services/content-service"
+import { useReaderSettings } from "@/hooks/use-reader-settings"
 import {
   X,
   Bookmark,
@@ -22,19 +24,23 @@ import {
   Maximize2,
   Download,
   ExternalLink,
+  Eye,
+  ThumbsUp,
 } from "lucide-react"
-import type { ArticleWithUserData, SourceType } from "@/types/database"
+import type { SourceType } from "@/types/database"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { sanitizeHTML } from "@/lib/utils/security"
 import { 
   getSourceTypeIcon, 
   getSourceTypeLabel, 
   getSourceTypeColor,
-  extractYouTubeVideoId
+  extractYouTubeVideoId,
+  formatCount,
+  formatDuration
 } from "@/lib/content-type-config"
 
 interface ContentViewerProps {
-  content: ArticleWithUserData | null
+  content: ContentWithMetadata | null
   isOpen: boolean
   onClose: () => void
   cardPosition?: DOMRect | null
@@ -88,7 +94,7 @@ function getYouTubeVideoId(url: string | null | undefined): string | null {
 }
 
 // Helper function to normalize article data from database
-function normalizeContent(article: ArticleWithUserData) {
+function normalizeContent(article: ContentWithMetadata) {
   // Determinar el autor según el tipo de contenido
   // Para YouTube el campo es channel_name, para RSS es author
   const sourceType = article.source.source_type
@@ -97,7 +103,7 @@ function normalizeContent(article: ArticleWithUserData) {
     // Para YouTube, el campo channel_name está en el artículo
     author = (article as any).channel_name || 'Unknown'
   } else {
-    author = article.author || 'Unknown'
+    author = (article as any).author || 'Unknown'
   }
 
   // Determinar excerpt/descripción
@@ -105,7 +111,7 @@ function normalizeContent(article: ArticleWithUserData) {
   if (sourceType === 'youtube_channel' || sourceType === 'youtube_video') {
     excerpt = (article as any).description || ''
   } else {
-    excerpt = article.excerpt || ''
+    excerpt = (article as any).excerpt || ''
   }
 
   return {
@@ -113,24 +119,27 @@ function normalizeContent(article: ArticleWithUserData) {
     type: sourceType,
     title: article.title,
     excerpt,
-    content: article.content || '',
+    content: (article as any).content || '',
     source: article.source.title,
     author,
     publishedAt: article.published_at ? new Date(article.published_at).toLocaleDateString() : 'Unknown',
     url: article.url,
-    readTime: article.reading_time ? `${article.reading_time} min read` : undefined,
+    readTime: (article as any).reading_time ? `${(article as any).reading_time} min read` : undefined,
     // Usar las nuevas columnas featured_media primero, fallback a image_url (legacy)
-    image: article.featured_media_type === 'image' 
-      ? (article.featured_media_url || article.image_url || '/placeholder.svg')
-      : (article.featured_thumbnail_url || article.image_url || '/placeholder.svg'),
-    isRead: article.user_article?.is_read || false,
-    isSaved: article.user_article?.is_favorite || false,
+    image: (article as any).featured_media_type === 'image' 
+      ? ((article as any).featured_media_url || (article as any).image_url || '/placeholder.svg')
+      : ((article as any).featured_thumbnail_url || (article as any).image_url || '/placeholder.svg'),
+    isRead: article.user_content?.is_read || false,
+    isSaved: article.user_content?.is_archived || false,
+    folderId: article.user_content?.folder_id || null,
     // Datos de video: para YouTube usar article.url, para otros usar featured_media_url
     videoUrl: (sourceType === 'youtube_channel' || sourceType === 'youtube_video') 
       ? article.url 
-      : (article.featured_media_type === 'video' ? article.featured_media_url : null),
-    videoDuration: (article as any).duration || article.featured_media_duration,
-    mediaType: article.featured_media_type,
+      : ((article as any).featured_media_type === 'video' ? (article as any).featured_media_url : null),
+    videoDuration: (article as any).duration || (article as any).featured_media_duration,
+    viewCount: (article as any).view_count || null,
+    likeCount: (article as any).like_count || null,
+    mediaType: (article as any).featured_media_type,
     isYouTube: sourceType === 'youtube_channel' || sourceType === 'youtube_video',
   }
 }
@@ -155,6 +164,8 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
   const floatingVideoRef = useRef<HTMLVideoElement>(null)
   const videoContainerRef = useRef<HTMLDivElement>(null)
   const [isSaved, setIsSaved] = useState(false)
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null)
+  const [savingToFolder, setSavingToFolder] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
   const [readingProgress, setReadingProgress] = useState(0)
@@ -171,14 +182,28 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
   // Normalize article data from database
   const normalizedContent = content ? normalizeContent(content) : null
 
-  // Reading customization state
-  const [fontSize, setFontSize] = useState(16)
-  const [fontFamily, setFontFamily] = useState("inter")
-  const [isDarkMode, setIsDarkMode] = useState(false)
-  const [backgroundColor, setBackgroundColor] = useState("#ffffff")
-  const [textColor, setTextColor] = useState("#000000")
-  const [lineHeight, setLineHeight] = useState(1.6)
-  const [maxWidth, setMaxWidth] = useState(800)
+  // Reading customization from global settings
+  const { settings: readerSettings, updateSetting, getFontFamilyCSS } = useReaderSettings()
+  const { fontSize, fontFamily, lineHeight, maxWidth, backgroundColor, textColor } = readerSettings
+  const isDarkMode = backgroundColor.toLowerCase() === '#000000' || 
+                     parseInt(backgroundColor.replace('#', ''), 16) < 0x808080
+
+  // Create setters that use updateSetting
+  const setFontSize = (value: number) => updateSetting('fontSize', value)
+  const setFontFamily = (value: string) => updateSetting('fontFamily', value)
+  const setBackgroundColor = (value: string) => updateSetting('backgroundColor', value)
+  const setTextColor = (value: string) => updateSetting('textColor', value)
+  const setLineHeight = (value: number) => updateSetting('lineHeight', value)
+  const setMaxWidth = (value: number) => updateSetting('maxWidth', value)
+  const setIsDarkMode = (value: boolean) => {
+    if (value) {
+      updateSetting('backgroundColor', '#000000')
+      updateSetting('textColor', '#ffffff')
+    } else {
+      updateSetting('backgroundColor', '#ffffff')
+      updateSetting('textColor', '#000000')
+    }
+  }
 
   const [shouldAnimateFromCard, setShouldAnimateFromCard] = useState(false)
   const [dragX, setDragX] = useState(0)
@@ -261,6 +286,7 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
   useEffect(() => {
     if (normalizedContent) {
       setIsSaved(normalizedContent.isSaved)
+      setCurrentFolderId(normalizedContent.folderId)
       // Resetear estado de orientación cuando cambia el contenido
       setMediaAspectRatio(null)
       setIsMediaVertical(false)
@@ -409,8 +435,39 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
     }
   }, [isOpen, isMobile, normalizedContent?.image])
 
-  const handleSave = () => {
-    setIsSaved(!isSaved)
+  // Handler para guardar con carpeta usando FolderPicker
+  const handleSaveToFolder = async (folderId: string | null) => {
+    if (!content) return
+    setSavingToFolder(true)
+    try {
+      const contentType = content.source.source_type === 'youtube_channel' || content.source.source_type === 'youtube_video' 
+        ? 'youtube' 
+        : 'rss'
+      await contentService.archiveToFolder(contentType, content.id, folderId)
+      setIsSaved(true)
+      setCurrentFolderId(folderId)
+    } catch (error) {
+      console.error('Error saving to folder:', error)
+    } finally {
+      setSavingToFolder(false)
+    }
+  }
+
+  // Handler para quitar del archivo
+  const handleToggleArchive = async () => {
+    if (!content) return
+    if (isSaved) {
+      try {
+        const contentType = content.source.source_type === 'youtube_channel' || content.source.source_type === 'youtube_video' 
+          ? 'youtube' 
+          : 'rss'
+        await contentService.toggleArchive(contentType, content.id, false)
+        setIsSaved(false)
+        setCurrentFolderId(null)
+      } catch (error) {
+        console.error('Error removing from archive:', error)
+      }
+    }
   }
   
   const handleDownload = async () => {
@@ -601,15 +658,15 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
     visible: {
       opacity: 1,
       transition: {
-        duration: 0.4,
-        ease: [0.32, 0.72, 0, 1] as [number, number, number, number], // Type assertion para Bézier
+        duration: 0.3,
+        ease: [0.22, 1, 0.36, 1] as [number, number, number, number],
       },
     },
     exit: {
       opacity: 0,
       transition: {
         duration: 0.3,
-        ease: [0.32, 0.72, 0, 1] as [number, number, number, number],
+        ease: [0.32, 0, 0.67, 0] as [number, number, number, number],
       },
     },
   }
@@ -628,8 +685,9 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
       }
     }
     return {
-      scale: 0.95,
+      scale: 0.96,
       opacity: 0,
+      borderRadius: 16,
     }
   }
 
@@ -645,9 +703,9 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
       opacity: 1,
       scale: 1,
       transition: {
-        duration: 0.5,
-        ease: [0.32, 0.72, 0, 1] as [number, number, number, number],
-        opacity: { duration: 0.3 },
+        duration: 0.38,
+        ease: [0.22, 1, 0.36, 1] as [number, number, number, number],
+        borderRadius: { duration: 0.28 },
       },
     },
     exit:
@@ -659,21 +717,24 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
             width: cardPosition.width,
             height: cardPosition.height,
             borderRadius: 16,
-            opacity: 1,
+            opacity: 1, // Mantener visible hasta el final
             scale: 1,
             transition: {
-              duration: 0.45,
-              ease: [0.4, 0, 0.2, 1] as [number, number, number, number],
-              scale: { duration: 0.45, ease: [0.4, 0, 0.2, 1] },
-              opacity: { duration: 0.2, delay: 0.25 },
+              duration: 0.38,
+              ease: [0.33, 1, 0.68, 1] as [number, number, number, number], // easeOutCubic
+              borderRadius: { 
+                duration: 0.32,
+                ease: [0.33, 1, 0.68, 1] as [number, number, number, number],
+              },
             },
           }
         : {
-            scale: 0.95,
+            scale: 0.96,
             opacity: 0,
+            borderRadius: 16,
             transition: {
-              duration: 0.3,
-              ease: [0.32, 0.72, 0, 1] as [number, number, number, number],
+              duration: 0.28,
+              ease: [0.32, 0, 0.67, 0] as [number, number, number, number],
             },
           },
   }
@@ -794,16 +855,14 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
                 <DynamicIsland
                   onClose={onClose}
                   isSaved={isSaved}
-                  onSave={handleSave}
+                  onToggleArchive={handleToggleArchive}
+                  onSaveToFolder={handleSaveToFolder}
+                  currentFolderId={currentFolderId}
+                  savingToFolder={savingToFolder}
                   onDownload={handleDownload}
                   onShare={handleShare}
                   onOpenInNewTab={handleOpenInNewTab}
                   onOpenOriginal={handleOpenOriginal}
-                  isMultimedia={isMultimedia}
-                  isPlaying={isPlaying}
-                  isMuted={isMuted}
-                  onTogglePlayback={togglePlayback}
-                  onToggleMute={toggleMute}
                   isScrolling={isScrolling}
                   scrollProgress={readingProgress}
                   fontSize={fontSize}
@@ -875,14 +934,7 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
                           maxWidth: `${maxWidth}px`,
                           fontSize: `${fontSize}px`,
                           lineHeight: lineHeight,
-                          fontFamily:
-                            fontFamily === "inter"
-                              ? "var(--font-inter)"
-                              : fontFamily === "playfair"
-                                ? "var(--font-playfair)"
-                                : fontFamily === "mono"
-                                  ? "monospace"
-                                  : "serif",
+                          fontFamily: getFontFamilyCSS(),
                         }}
                       >
                         {/* Metadata debajo del video */}
@@ -894,7 +946,7 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
                             <span className="text-sm opacity-70">{normalizedContent.source}</span>
                           </div>
                           
-                          <div className="flex items-center gap-4 text-sm opacity-70">
+                          <div className="flex items-center gap-4 text-sm opacity-70 flex-wrap">
                             <span className="flex items-center gap-1">
                               <User className="h-3 w-3" />
                               {normalizedContent.author}
@@ -904,7 +956,22 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
                               {normalizedContent.publishedAt}
                             </span>
                             {normalizedContent.videoDuration && (
-                              <span>{Math.floor(normalizedContent.videoDuration / 60)}:{String(normalizedContent.videoDuration % 60).padStart(2, '0')}</span>
+                              <span className="flex items-center gap-1">
+                                <Play className="h-3 w-3" />
+                                {formatDuration(normalizedContent.videoDuration)}
+                              </span>
+                            )}
+                            {normalizedContent.viewCount && (
+                              <span className="flex items-center gap-1" title={`${normalizedContent.viewCount.toLocaleString()} visualizaciones`}>
+                                <Eye className="h-3 w-3" />
+                                {formatCount(normalizedContent.viewCount)}
+                              </span>
+                            )}
+                            {normalizedContent.likeCount && (
+                              <span className="flex items-center gap-1" title={`${normalizedContent.likeCount.toLocaleString()} me gusta`}>
+                                <ThumbsUp className="h-3 w-3" />
+                                {formatCount(normalizedContent.likeCount)}
+                              </span>
                             )}
                           </div>
                         </header>
@@ -959,14 +1026,7 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
                       maxWidth: `${maxWidth}px`,
                       fontSize: `${fontSize}px`,
                       lineHeight: lineHeight,
-                      fontFamily:
-                        fontFamily === "inter"
-                          ? "var(--font-inter)"
-                          : fontFamily === "playfair"
-                            ? "var(--font-playfair)"
-                            : fontFamily === "mono"
-                              ? "monospace"
-                              : "serif",
+                      fontFamily: getFontFamilyCSS(),
                     }}
                   >
                     {/* Article Header */}

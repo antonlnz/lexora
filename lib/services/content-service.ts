@@ -290,6 +290,76 @@ export class ContentService {
   }
 
   /**
+   * Alterna el estado de leído de un contenido
+   * Si se desmarca y no tiene otros datos relevantes, elimina el registro
+   */
+  async toggleRead(
+    contentType: ContentType,
+    contentId: string,
+    isRead: boolean
+  ): Promise<void> {
+    const supabase = this.getClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    
+    if (!user) return
+
+    if (isRead) {
+      // Marcar como leído
+      await this.markAsRead(contentType, contentId)
+    } else {
+      // Desmarcar como leído
+      const { data: existing } = await supabase
+        .from('user_content')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('content_type', contentType)
+        .eq('content_id', contentId)
+        .single()
+
+      if (existing) {
+        // Verificar si tiene otros datos relevantes
+        const hasOtherData = existing.is_archived || 
+                            existing.is_favorite ||
+                            existing.notes ||
+                            (existing.reading_progress && existing.reading_progress > 0) ||
+                            existing.folder_id
+
+        if (hasOtherData) {
+          // Solo actualizar is_read a false
+          const { error } = await supabase
+            .from('user_content')
+            .update({
+              is_read: false,
+              read_at: null,
+              last_accessed_at: new Date().toISOString()
+            })
+            .eq('user_id', user.id)
+            .eq('content_type', contentType)
+            .eq('content_id', contentId)
+
+          if (error) {
+            console.error('Error unmarking as read:', error)
+            throw error
+          }
+        } else {
+          // No tiene otros datos, eliminar el registro completamente
+          const { error } = await supabase
+            .from('user_content')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('content_type', contentType)
+            .eq('content_id', contentId)
+
+          if (error) {
+            console.error('Error deleting user_content:', error)
+            throw error
+          }
+        }
+      }
+    }
+  }
+
+  /**
    * Marca/desmarca contenido como favorito
    */
   async toggleFavorite(
@@ -331,41 +401,217 @@ export class ContentService {
   /**
    * Archiva/desarchivar contenido
    * El contenido archivado se protege de eliminación automática
+   * Si se desarchiva y no hay otros datos relevantes (is_read, notes, etc.), se elimina el registro
    */
   async toggleArchive(
     contentType: ContentType,
     contentId: string,
-    isArchived: boolean
+    isArchived: boolean,
+    folderId?: string | null
   ): Promise<void> {
     const supabase = this.getClient()
     const { data: { user } } = await supabase.auth.getUser()
     
     if (!user) return
 
-    const updateData: Partial<UserContentInsert> = {
-      user_id: user.id,
-      content_type: contentType,
-      content_id: contentId,
-      is_archived: isArchived,
-      last_accessed_at: new Date().toISOString()
-    }
-
     if (isArchived) {
-      updateData.archived_at = new Date().toISOString()
+      // Archivar: hacer upsert
+      const updateData: Partial<UserContentInsert> = {
+        user_id: user.id,
+        content_type: contentType,
+        content_id: contentId,
+        is_archived: true,
+        archived_at: new Date().toISOString(),
+        last_accessed_at: new Date().toISOString(),
+        folder_id: folderId ?? null
+      }
+
+      const { error } = await supabase
+        .from('user_content')
+        .upsert(updateData, {
+          onConflict: 'user_id,content_type,content_id'
+        })
+
+      if (error) {
+        console.error('Error archiving content:', error)
+        throw error
+      }
     } else {
-      updateData.archived_at = null
+      // Desarchivar: verificar si hay otros datos importantes antes de eliminar
+      const { data: existing } = await supabase
+        .from('user_content')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('content_type', contentType)
+        .eq('content_id', contentId)
+        .single()
+
+      if (existing) {
+        // Si tiene otros datos relevantes (is_read, notes, reading_progress, etc.), solo actualizar
+        const hasOtherData = existing.is_read || 
+                            existing.notes || 
+                            (existing.reading_progress && existing.reading_progress > 0) ||
+                            (existing.time_spent && existing.time_spent > 0)
+
+        if (hasOtherData) {
+          // Solo desmarcar is_archived, mantener el registro
+          const { error } = await supabase
+            .from('user_content')
+            .update({
+              is_archived: false,
+              archived_at: null,
+              folder_id: null,
+              last_accessed_at: new Date().toISOString()
+            })
+            .eq('user_id', user.id)
+            .eq('content_type', contentType)
+            .eq('content_id', contentId)
+
+          if (error) {
+            console.error('Error unarchiving content:', error)
+            throw error
+          }
+        } else {
+          // No tiene otros datos, eliminar el registro completamente
+          const { error } = await supabase
+            .from('user_content')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('content_type', contentType)
+            .eq('content_id', contentId)
+
+          if (error) {
+            console.error('Error deleting user_content:', error)
+            throw error
+          }
+        }
+      }
     }
+  }
+
+  /**
+   * Archiva contenido en una carpeta específica
+   */
+  async archiveToFolder(
+    contentType: ContentType,
+    contentId: string,
+    folderId: string | null
+  ): Promise<void> {
+    return this.toggleArchive(contentType, contentId, true, folderId)
+  }
+
+  /**
+   * Mueve contenido archivado a otra carpeta
+   */
+  async moveToFolder(
+    contentType: ContentType,
+    contentId: string,
+    folderId: string | null
+  ): Promise<void> {
+    const supabase = this.getClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    
+    if (!user) return
 
     const { error } = await supabase
       .from('user_content')
-      .upsert(updateData, {
-        onConflict: 'user_id,content_type,content_id'
+      .update({
+        folder_id: folderId,
+        last_accessed_at: new Date().toISOString()
       })
+      .eq('user_id', user.id)
+      .eq('content_type', contentType)
+      .eq('content_id', contentId)
 
     if (error) {
-      console.error('Error toggling archive:', error)
+      console.error('Error moving content to folder:', error)
       throw error
     }
+  }
+
+  /**
+   * Obtiene contenido archivado por carpeta
+   */
+  async getArchivedByFolder(folderId: string | null): Promise<ContentWithMetadata[]> {
+    const supabase = this.getClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    
+    if (!user) return []
+
+    // Primero obtener los IDs de contenido archivado en esta carpeta
+    let query = supabase
+      .from('user_content')
+      .select('content_id, content_type')
+      .eq('user_id', user.id)
+      .eq('is_archived', true)
+    
+    if (folderId === null) {
+      query = query.is('folder_id', null)
+    } else {
+      query = query.eq('folder_id', folderId)
+    }
+
+    const { data: userContentItems, error } = await query
+
+    if (error || !userContentItems || userContentItems.length === 0) {
+      return []
+    }
+
+    // Agrupar por tipo de contenido
+    const contentByType = userContentItems.reduce((acc, item) => {
+      const contentType = item.content_type as ContentType
+      if (!acc[contentType]) {
+        acc[contentType] = []
+      }
+      acc[contentType].push(item.content_id)
+      return acc
+    }, {} as Record<ContentType, string[]>)
+
+    // Obtener el contenido completo para cada tipo
+    const allContent: ContentWithMetadata[] = []
+
+    for (const [type, ids] of Object.entries(contentByType) as [ContentType, string[]][]) {
+      const table = CONTENT_TYPE_TO_TABLE[type]
+      if (!table) continue
+
+      const { data: content } = await supabase
+        .from(table)
+        .select(`
+          *,
+          source:content_sources!inner(*),
+          user_source:content_sources!inner(user_sources!inner(*))
+        `)
+        .in('id', ids)
+
+      if (content) {
+        // Obtener user_content para estos items
+        const { data: userContentData } = await supabase
+          .from('user_content')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('content_type', type)
+          .in('content_id', ids)
+
+        const userContentMap = new Map(
+          (userContentData || []).map(uc => [uc.content_id, uc])
+        )
+
+        const results = content.map(item => ({
+          ...item,
+          content_type: type as ContentType,
+          user_content: userContentMap.get(item.id) || null
+        })) as ContentWithMetadata[]
+
+        allContent.push(...results)
+      }
+    }
+
+    // Ordenar por fecha de archivo
+    return allContent.sort((a, b) => {
+      const dateA = a.user_content?.archived_at || ''
+      const dateB = b.user_content?.archived_at || ''
+      return dateB.localeCompare(dateA)
+    })
   }
 
   /**

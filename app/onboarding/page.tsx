@@ -2,43 +2,44 @@
 
 import { useState } from "react"
 import { useAuth } from "@/contexts/auth-context"
-import { useSubscription, type SubscriptionTier } from "@/contexts/subscription-context"
+import { useSubscription } from "@/contexts/subscription-context"
 import { Button } from "@/components/ui/button"
 import { motion, AnimatePresence } from "framer-motion"
-import { Check, ArrowRight, ArrowLeft, Sparkles, Zap, Shield, Globe, CreditCard } from "lucide-react"
+import { Check, ArrowRight, ArrowLeft, Sparkles, Zap, Shield, Globe, CreditCard, Loader2 } from "lucide-react"
 import { SubscriptionPlans } from "@/components/subscription-plans"
+import { toast } from "sonner"
 
 const onboardingSteps = [
   {
-    title: "Welcome to Lexora",
-    description: "Your personal content universe where all your digital content comes together in one elegant space.",
+    title: "Bienvenido a Lexora",
+    description: "Tu universo de contenido personal donde todo tu contenido digital se une en un espacio elegante.",
     icon: Sparkles,
     image: "/welcome-dashboard.png",
   },
   {
-    title: "Centralize Your Content",
+    title: "Centraliza Tu Contenido",
     description:
-      "Connect all your favorite sources - news, newsletters, YouTube, Twitter, Instagram, and more - in one place.",
+      "Conecta todas tus fuentes favoritas - noticias, newsletters, YouTube, Twitter, Instagram y más - en un solo lugar.",
     icon: Globe,
     image: "/content-sources.jpg",
   },
   {
-    title: "Choose Your Plan",
-    description: "Select the subscription plan that best fits your needs. You can always upgrade or downgrade later.",
+    title: "Elige Tu Plan",
+    description: "Selecciona el plan de suscripción que mejor se adapte a tus necesidades. Siempre puedes cambiar después.",
     icon: CreditCard,
     isSubscription: true,
   },
   {
-    title: "Personalized Experience",
+    title: "Experiencia Personalizada",
     description:
-      "Customize your reading experience with themes, fonts, and layouts that match your style and preferences.",
+      "Personaliza tu experiencia de lectura con temas, fuentes y diseños que coincidan con tu estilo y preferencias.",
     icon: Zap,
     image: "/personalization.jpg",
   },
   {
-    title: "Stay Organized",
+    title: "Mantente Organizado",
     description:
-      "Save, archive, and organize your content with powerful filters and search to find exactly what you need.",
+      "Guarda, archiva y organiza tu contenido con filtros poderosos y búsqueda para encontrar exactamente lo que necesitas.",
     icon: Shield,
     image: "/interconnected-network.png",
   },
@@ -46,14 +47,32 @@ const onboardingSteps = [
 
 export default function OnboardingPage() {
   const { completeOnboarding } = useAuth()
-  const { upgradePlan } = useSubscription()
+  const { upgradePlan, plans, isLoading: isLoadingSubscription } = useSubscription()
   const [currentStep, setCurrentStep] = useState(0)
   const [direction, setDirection] = useState(0)
-  const [selectedPlan, setSelectedPlan] = useState<SubscriptionTier>("free")
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
+  const [isProcessing, setIsProcessing] = useState(false)
+
+  // Obtener el plan Free por defecto
+  const freePlan = plans.find(p => p.price === 0)
 
   const handleNext = async () => {
+    // Si estamos en el paso de suscripción, guardar la selección
     if (onboardingSteps[currentStep].isSubscription) {
-      await upgradePlan(selectedPlan)
+      const planToUse = selectedPlanId || freePlan?.id
+      if (planToUse) {
+        setIsProcessing(true)
+        try {
+          await upgradePlan(planToUse)
+          toast.success("Plan activado correctamente")
+        } catch (error) {
+          console.error("Error setting plan:", error)
+          toast.error("Error al activar el plan")
+          setIsProcessing(false)
+          return
+        }
+        setIsProcessing(false)
+      }
     }
 
     if (currentStep < onboardingSteps.length - 1) {
@@ -71,8 +90,20 @@ export default function OnboardingPage() {
     }
   }
 
-  const handleSkip = () => {
+  const handleSkip = async () => {
+    // Si no se ha seleccionado un plan, asignar el Free
+    if (!selectedPlanId && freePlan) {
+      try {
+        await upgradePlan(freePlan.id)
+      } catch (error) {
+        console.error("Error setting free plan:", error)
+      }
+    }
     completeOnboarding()
+  }
+
+  const handlePlanSelect = (planId: string) => {
+    setSelectedPlanId(planId)
   }
 
   const step = onboardingSteps[currentStep]
@@ -133,7 +164,17 @@ export default function OnboardingPage() {
                     <p className="text-base text-muted-foreground text-balance max-w-2xl mx-auto">{step.description}</p>
                   </div>
 
-                  <SubscriptionPlans onSelect={setSelectedPlan} />
+                  {isLoadingSubscription ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    </div>
+                  ) : (
+                    <SubscriptionPlans 
+                      onSelect={handlePlanSelect} 
+                      persistSelection={true}
+                      defaultSelected={selectedPlanId || undefined}
+                    />
+                  )}
                 </>
               ) : (
                 // Regular onboarding step
@@ -165,24 +206,29 @@ export default function OnboardingPage() {
 
           {/* Navigation */}
           <div className="flex items-center justify-between mt-12 gap-4">
-            <Button variant="ghost" onClick={handlePrevious} disabled={currentStep === 0} className="hover-lift-subtle">
+            <Button variant="ghost" onClick={handlePrevious} disabled={currentStep === 0 || isProcessing} className="hover-lift-subtle">
               <ArrowLeft className="h-4 w-4 mr-2" />
-              Previous
+              Anterior
             </Button>
 
-            <Button variant="ghost" onClick={handleSkip} className="text-muted-foreground hover-lift-subtle">
-              Skip
+            <Button variant="ghost" onClick={handleSkip} disabled={isProcessing} className="text-muted-foreground hover-lift-subtle">
+              Saltar
             </Button>
 
-            <Button onClick={handleNext} className="hover-lift-subtle">
-              {currentStep === onboardingSteps.length - 1 ? (
+            <Button onClick={handleNext} disabled={isProcessing} className="hover-lift-subtle">
+              {isProcessing ? (
                 <>
-                  Get Started
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Procesando...
+                </>
+              ) : currentStep === onboardingSteps.length - 1 ? (
+                <>
+                  Comenzar
                   <Check className="h-4 w-4 ml-2" />
                 </>
               ) : (
                 <>
-                  Next
+                  Siguiente
                   <ArrowRight className="h-4 w-4 ml-2" />
                 </>
               )}

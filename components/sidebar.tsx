@@ -3,12 +3,38 @@
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { GlassNotificationBadge, GlassTooltip } from "@/components/glass-components"
-import { Newspaper, Youtube, Twitter, Instagram, Music2, Mail, Plus, TrendingUp, Clock, Bookmark, ArrowLeft, ExternalLink, Globe, Rss } from "lucide-react"
+import { Newspaper, Youtube, Twitter, Instagram, Music2, Mail, Plus, TrendingUp, Clock, Bookmark, ArrowLeft, ExternalLink, Globe, Rss, Mic } from "lucide-react"
 import { useState, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { AddSourceDialog } from "@/components/add-source-dialog"
 import { useSubscription } from "@/contexts/subscription-context"
 import { sourceService, type SourceWithUserData } from "@/lib/services/source-service"
+
+// Mapeo de tipos de BD a categorías de UI
+// Algunos tipos de BD se agrupan en una misma categoría de UI
+const SOURCE_TYPE_CATEGORIES: Record<string, string> = {
+  'rss': 'rss',
+  'youtube_channel': 'youtube',
+  'youtube_video': 'youtube',
+  'twitter': 'twitter',
+  'instagram': 'instagram',
+  'tiktok': 'tiktok',
+  'newsletter': 'newsletter',
+  'website': 'website',
+  'podcast': 'podcast',
+}
+
+// Tipos de BD que corresponden a cada categoría de UI
+const CATEGORY_TO_SOURCE_TYPES: Record<string, string[]> = {
+  'rss': ['rss'],
+  'youtube': ['youtube_channel', 'youtube_video'],
+  'twitter': ['twitter'],
+  'instagram': ['instagram'],
+  'tiktok': ['tiktok'],
+  'newsletter': ['newsletter'],
+  'website': ['website'],
+  'podcast': ['podcast'],
+}
 
 const initialSources = [
   {
@@ -18,7 +44,7 @@ const initialSources = [
     color: "bg-orange-500/20 text-orange-600",
     hasNotifications: false,
     notificationCount: 0,
-    source_type: "rss",
+    category: "rss",
   },
   {
     name: "YouTube",
@@ -27,7 +53,16 @@ const initialSources = [
     color: "bg-red-500/20 text-red-600",
     hasNotifications: false,
     notificationCount: 0,
-    source_type: "youtube",
+    category: "youtube",
+  },
+  {
+    name: "Podcast",
+    icon: Mic,
+    count: 0,
+    color: "bg-violet-500/20 text-violet-600",
+    hasNotifications: false,
+    notificationCount: 0,
+    category: "podcast",
   },
   {
     name: "Twitter",
@@ -36,7 +71,7 @@ const initialSources = [
     color: "bg-sky-500/20 text-sky-600",
     hasNotifications: false,
     notificationCount: 0,
-    source_type: "twitter",
+    category: "twitter",
   },
   {
     name: "Instagram",
@@ -45,7 +80,7 @@ const initialSources = [
     color: "bg-pink-500/20 text-pink-600",
     hasNotifications: false,
     notificationCount: 0,
-    source_type: "instagram",
+    category: "instagram",
   },
   {
     name: "TikTok",
@@ -54,7 +89,7 @@ const initialSources = [
     color: "bg-purple-500/20 text-purple-600",
     hasNotifications: false,
     notificationCount: 0,
-    source_type: "tiktok",
+    category: "tiktok",
   },
   {
     name: "Newsletter",
@@ -63,7 +98,7 @@ const initialSources = [
     color: "bg-green-500/20 text-green-600",
     hasNotifications: false,
     notificationCount: 0,
-    source_type: "newsletter",
+    category: "newsletter",
   },
   {
     name: "Website",
@@ -72,7 +107,7 @@ const initialSources = [
     color: "bg-gray-500/20 text-gray-600",
     hasNotifications: false,
     notificationCount: 0,
-    source_type: "website",
+    category: "website",
   },
 ]
 
@@ -86,10 +121,14 @@ interface SourceCategory {
   name: string
   icon: any
   color: string
-  source_type: string
+  category: string
 }
 
-export function Sidebar() {
+interface SidebarProps {
+  onClose?: () => void
+}
+
+export function Sidebar({ onClose }: SidebarProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [isAddSourceOpen, setIsAddSourceOpen] = useState(false)
@@ -110,7 +149,9 @@ export function Sidebar() {
     
     try {
       const allSources = await sourceService.getUserSources(true)
-      const filtered = allSources.filter(source => source.source_type === categoryData.source_type)
+      // Obtener los tipos de BD que corresponden a esta categoría
+      const sourceTypes = CATEGORY_TO_SOURCE_TYPES[categoryData.category] || []
+      const filtered = allSources.filter(source => sourceTypes.includes(source.source_type))
       setCategorySources(filtered)
     } catch (error) {
       console.error("Error loading category sources:", error)
@@ -125,21 +166,24 @@ export function Sidebar() {
     setCategorySources([])
   }
 
-  // Contar fuentes reales por tipo
+  // Contar fuentes reales por categoría (agrupando tipos de BD)
   useEffect(() => {
     const loadSourceCounts = async () => {
       try {
         const allSources = await sourceService.getUserSources(true)
-        const typeCounts = allSources.reduce((acc, source) => {
-          const type = source.source_type
-          acc[type] = (acc[type] || 0) + 1
+        
+        // Contar por categoría de UI (no por tipo de BD)
+        const categoryCounts = allSources.reduce((acc, source) => {
+          // Mapear el tipo de BD a la categoría de UI
+          const category = SOURCE_TYPE_CATEGORIES[source.source_type] || source.source_type
+          acc[category] = (acc[category] || 0) + 1
           return acc
         }, {} as Record<string, number>)
 
-        // Actualizar los contadores
+        // Actualizar los contadores usando la categoría
         setSources(prev => prev.map(s => ({
           ...s,
-          count: typeCounts[s.source_type] || 0
+          count: categoryCounts[s.category] || 0
         })))
       } catch (error) {
         console.error("Error loading source counts:", error)
@@ -192,6 +236,8 @@ export function Sidebar() {
                     onClick={() => {
                       // Navegar dinámicamente sin recarga
                       router.push(`/?source=${source.id}`)
+                      // Cerrar la barra lateral
+                      onClose?.()
                     }}
                   >
                     <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -265,7 +311,7 @@ export function Sidebar() {
               <div className="space-y-3">
                 {sources.map((source) => (
                   <div
-                    key={source.source_type}
+                    key={source.category}
                     className="flex items-center justify-between p-3 rounded-xl glass hover:bg-accent/30 hover-lift-subtle transition-colors cursor-pointer relative"
                     onClick={() => handleCategoryClick(source)}
                   >
@@ -319,7 +365,9 @@ export function Sidebar() {
             setLoadingSources(true)
             try {
               const allSources = await sourceService.getUserSources(true)
-              const filtered = allSources.filter(source => source.source_type === selectedCategory.source_type)
+              // Obtener los tipos de BD que corresponden a esta categoría
+              const sourceTypes = CATEGORY_TO_SOURCE_TYPES[selectedCategory.category] || []
+              const filtered = allSources.filter(source => sourceTypes.includes(source.source_type))
               setCategorySources(filtered)
             } catch (error) {
               console.error("Error reloading sources:", error)
@@ -328,18 +376,20 @@ export function Sidebar() {
             }
           }
           
-          // Recargar contadores
+          // Recargar contadores usando categorías
           try {
             const allSources = await sourceService.getUserSources(true)
-            const typeCounts = allSources.reduce((acc, source) => {
-              const type = source.source_type
-              acc[type] = (acc[type] || 0) + 1
+            
+            // Contar por categoría de UI
+            const categoryCounts = allSources.reduce((acc, source) => {
+              const category = SOURCE_TYPE_CATEGORIES[source.source_type] || source.source_type
+              acc[category] = (acc[category] || 0) + 1
               return acc
             }, {} as Record<string, number>)
 
             setSources(prev => prev.map(s => ({
               ...s,
-              count: typeCounts[s.source_type] || 0
+              count: categoryCounts[s.category] || 0
             })))
           } catch (error) {
             console.error("Error updating counts:", error)

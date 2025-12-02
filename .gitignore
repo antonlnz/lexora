@@ -37,3 +37,7 @@ next-env.d.ts
 # Los archivos .md del proyecto SÍ deben estar en el repo
 *.md
 !README.md
+
+
+/scripts
+/testing

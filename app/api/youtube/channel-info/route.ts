@@ -36,7 +36,7 @@ export async function POST(request: Request) {
       )
     }
 
-    const { channelId, avatarUrl, channelHandle, finalUrl } = channelInfo
+    const { channelId, avatarUrl, channelHandle, finalUrl, channelDescription } = channelInfo
 
     // Detectar si hubo una redirección a un canal diferente
     const originalHandle = url.match(/youtube\.com\/@([\w-]+)/)?.[1]?.toLowerCase()
@@ -67,6 +67,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       channelId,
       channelName,
+      channelDescription,
       feedUrl,
       avatarUrl,
       // Información sobre redirección
@@ -89,6 +90,7 @@ interface ChannelInfo {
   avatarUrl: string | null
   channelHandle: string | null
   finalUrl: string
+  channelDescription: string | null
 }
 
 /**
@@ -130,7 +132,9 @@ async function fetchChannelPage(pageUrl: string): Promise<ChannelInfo | null> {
   try {
     const response = await fetch(pageUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
       },
       redirect: 'follow', // Seguir redirecciones
     })
@@ -140,15 +144,53 @@ async function fetchChannelPage(pageUrl: string): Promise<ChannelInfo | null> {
     const html = await response.text()
     const finalUrl = response.url // URL final después de redirecciones
 
-    // Buscar channelId en el HTML
+    // Buscar channelId de forma específica para el canal principal de la página
     let channelId: string | null = null
-    const jsonMatch = html.match(/"channelId":"(UC[A-Za-z0-9_-]+)"/)
-    if (jsonMatch) {
-      channelId = jsonMatch[1]
-    } else {
-      // Buscar en canonical
-      const canonMatch = html.match(/\/channel\/(UC[A-Za-z0-9_-]+)/)
-      if (canonMatch) channelId = canonMatch[1]
+    
+    // Método 1: Buscar el externalId que es el ID del canal principal
+    const externalIdMatch = html.match(/"externalId"\s*:\s*"(UC[A-Za-z0-9_-]+)"/)
+    if (externalIdMatch) {
+      channelId = externalIdMatch[1]
+    }
+    
+    // Método 2: Buscar en la URL canónica <link rel="canonical" href="...">
+    if (!channelId) {
+      const canonicalMatch = html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']https?:\/\/(?:www\.)?youtube\.com\/channel\/(UC[A-Za-z0-9_-]+)["']/i)
+      if (canonicalMatch) {
+        channelId = canonicalMatch[1]
+      }
+    }
+    
+    // Método 3: Buscar browseId en el contexto inicial del canal
+    if (!channelId) {
+      const browseIdMatch = html.match(/"browseId"\s*:\s*"(UC[A-Za-z0-9_-]+)"[^}]*"canonicalBaseUrl"/)
+      if (browseIdMatch) {
+        channelId = browseIdMatch[1]
+      }
+    }
+
+    // Método 4: Buscar channelId junto con vanityChannelUrl (más específico)
+    if (!channelId) {
+      const vanityMatch = html.match(/"channelId"\s*:\s*"(UC[A-Za-z0-9_-]+)"[^}]*"vanityChannelUrl"/)
+      if (vanityMatch) {
+        channelId = vanityMatch[1]
+      }
+    }
+
+    // Método 5 (fallback): Primer channelId que aparece cerca de "ownerUrls" o "header"
+    if (!channelId) {
+      const headerMatch = html.match(/"header"[^}]*"channelId"\s*:\s*"(UC[A-Za-z0-9_-]+)"/)
+      if (headerMatch) {
+        channelId = headerMatch[1]
+      }
+    }
+
+    // Último fallback: primera aparición de channelId (menos fiable)
+    if (!channelId) {
+      const jsonMatch = html.match(/"channelId"\s*:\s*"(UC[A-Za-z0-9_-]+)"/)
+      if (jsonMatch) {
+        channelId = jsonMatch[1]
+      }
     }
 
     if (!channelId) return null
@@ -181,7 +223,38 @@ async function fetchChannelPage(pageUrl: string): Promise<ChannelInfo | null> {
       }
     }
 
-    return { channelId, avatarUrl, channelHandle, finalUrl }
+    // Extraer la descripción del canal
+    let channelDescription: string | null = null
+    
+    // Método 1: Buscar og:description (meta tag)
+    const ogDescMatch = html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']*)["']/i)
+    if (ogDescMatch && ogDescMatch[1]) {
+      channelDescription = ogDescMatch[1].trim()
+    }
+    
+    // Método 2: Buscar meta description
+    if (!channelDescription) {
+      const metaDescMatch = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']/i)
+      if (metaDescMatch && metaDescMatch[1]) {
+        channelDescription = metaDescMatch[1].trim()
+      }
+    }
+    
+    // Método 3: Buscar en el JSON embebido "description":"..."
+    if (!channelDescription) {
+      const jsonDescMatch = html.match(/"description"\s*:\s*"([^"]{10,500})"/)
+      if (jsonDescMatch && jsonDescMatch[1]) {
+        // Decodificar caracteres escapados
+        channelDescription = jsonDescMatch[1]
+          .replace(/\\n/g, ' ')
+          .replace(/\\r/g, '')
+          .replace(/\\t/g, ' ')
+          .replace(/\\"/g, '"')
+          .trim()
+      }
+    }
+
+    return { channelId, avatarUrl, channelHandle, finalUrl, channelDescription }
   } catch {
     return null
   }

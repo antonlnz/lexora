@@ -157,7 +157,7 @@ export function CollapsibleSidebar() {
         }}
       >
         <div className="h-full overflow-y-auto p-4 bg-background/95 backdrop-blur-xl border-r border-border/50">
-          <Sidebar />
+          <Sidebar onClose={() => setIsOpen(false)} />
         </div>
 
         <Button

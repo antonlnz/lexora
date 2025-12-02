@@ -241,6 +241,16 @@ export class YouTubeHandler implements SourceHandler {
         })
       }
 
+      // Recopilar todos los video IDs para obtener detalles en lote
+      const videoIds: string[] = []
+      for (const item of items) {
+        const videoId = (item.metadata?.videoId as string) || this.extractVideoIdFromUrl(item.url)
+        if (videoId) videoIds.push(videoId)
+      }
+
+      // Obtener detalles de video (duration, view_count, like_count)
+      const videoDetailsMap = await this.fetchVideoDetails(videoIds)
+
       let articlesAdded = 0
       let articlesUpdated = 0
 
@@ -248,6 +258,9 @@ export class YouTubeHandler implements SourceHandler {
         const videoId = (item.metadata?.videoId as string) || this.extractVideoIdFromUrl(item.url)
         
         if (!videoId) continue
+
+        // Obtener detalles del mapa (si existen)
+        const details = videoDetailsMap.get(videoId)
 
         const videoData = {
           source_id: source.id,
@@ -259,9 +272,10 @@ export class YouTubeHandler implements SourceHandler {
           description: item.content,
           thumbnail_url: item.media.thumbnailUrl || item.media.mediaUrl,
           video_url: `https://www.youtube.com/watch?v=${videoId}`,
-          duration: item.media.duration,
-          view_count: null, // Requeriría API de YouTube
-          like_count: null,
+          // Usar duración del feed RSS si está disponible, sino de la API
+          duration: item.media.duration || details?.duration || null,
+          view_count: details?.viewCount || null,
+          like_count: details?.likeCount || null,
         }
 
         // Verificar si ya existe
@@ -417,32 +431,100 @@ export class YouTubeHandler implements SourceHandler {
       const res = await fetch(u.href, { 
         method: 'GET',
         headers: {
-          'User-Agent': this.defaultUserAgent,
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
         },
         signal: AbortSignal.timeout(10000),
       })
       if (!res.ok) return null
       const html = await res.text()
 
-      // Buscar "channelId":"UC..."
-      const jsonMatch = html.match(/"channelId":"(UC[0-9A-Za-z_-]+)"/)
-      if (jsonMatch) return channelFeed(jsonMatch[1])
+      // Método 1: Buscar externalId (ID del canal principal)
+      const externalIdMatch = html.match(/"externalId"\s*:\s*"(UC[0-9A-Za-z_-]+)"/)
+      if (externalIdMatch) return channelFeed(externalIdMatch[1])
 
-      // Buscar canonical hacia /channel/UC...
+      // Método 2: Buscar en la URL canónica <link rel="canonical">
       const canonMatch = html.match(
         /<link[^>]+rel=["']canonical["'][^>]+href=["']https?:\/\/(?:www\.)?youtube\.com\/channel\/(UC[0-9A-Za-z_-]+)["']/i
       )
       if (canonMatch) return channelFeed(canonMatch[1])
 
-      // Cualquier aparición de /channel/UC...
-      const anyChannel = html.match(/\/channel\/(UC[0-9A-Za-z_-]+)/)
-      if (anyChannel) return channelFeed(anyChannel[1])
+      // Método 3: Buscar browseId junto a canonicalBaseUrl
+      const browseIdMatch = html.match(/"browseId"\s*:\s*"(UC[0-9A-Za-z_-]+)"[^}]*"canonicalBaseUrl"/)
+      if (browseIdMatch) return channelFeed(browseIdMatch[1])
+
+      // Método 4: Buscar channelId junto con vanityChannelUrl
+      const vanityMatch = html.match(/"channelId"\s*:\s*"(UC[0-9A-Za-z_-]+)"[^}]*"vanityChannelUrl"/)
+      if (vanityMatch) return channelFeed(vanityMatch[1])
+
+      // Método 5 (fallback): channelId cerca de "header"
+      const headerMatch = html.match(/"header"[^}]*"channelId"\s*:\s*"(UC[0-9A-Za-z_-]+)"/)
+      if (headerMatch) return channelFeed(headerMatch[1])
+
+      // Último fallback: primera aparición de channelId
+      const jsonMatch = html.match(/"channelId"\s*:\s*"(UC[0-9A-Za-z_-]+)"/)
+      if (jsonMatch) return channelFeed(jsonMatch[1])
     } catch (err) {
       // CORS o fallo de fetch
       return null
     }
 
     return null
+  }
+
+  /**
+   * Obtiene detalles de videos (duration, view_count, like_count) desde la API interna
+   */
+  private async fetchVideoDetails(videoIds: string[]): Promise<Map<string, { duration: number | null; viewCount: number | null; likeCount: number | null }>> {
+    const detailsMap = new Map<string, { duration: number | null; viewCount: number | null; likeCount: number | null }>()
+    
+    if (videoIds.length === 0) return detailsMap
+
+    try {
+      // Determinar la URL base para la API
+      // En desarrollo local usar localhost, en producción usar la URL del entorno
+      const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 
+        process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 
+        'http://localhost:3000'
+      
+      // Dividir en lotes de 50 (límite de la API de YouTube)
+      const batches: string[][] = []
+      for (let i = 0; i < videoIds.length; i += 50) {
+        batches.push(videoIds.slice(i, i + 50))
+      }
+
+      for (const batch of batches) {
+        try {
+          const response = await fetch(`${baseUrl}/api/youtube/video-details`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ videoIds: batch }),
+          })
+
+          if (response.ok) {
+            const data = await response.json()
+            for (const video of data.videos || []) {
+              detailsMap.set(video.videoId, {
+                duration: video.duration,
+                viewCount: video.viewCount,
+                likeCount: video.likeCount,
+              })
+            }
+          }
+        } catch (batchError) {
+          console.warn('Error fetching video details batch:', batchError)
+          // Continuar con el siguiente lote
+        }
+      }
+    } catch (error) {
+      console.warn('Error fetching video details:', error)
+      // No es crítico, simplemente retornamos un mapa vacío
+    }
+
+    return detailsMap
   }
 
   /**

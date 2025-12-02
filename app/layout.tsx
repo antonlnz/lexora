@@ -1,11 +1,13 @@
 import type React from "react"
 import type { Metadata, Viewport } from "next"
-import { Inter, Playfair_Display } from "next/font/google"
+import { Inter, Playfair_Display, DM_Mono } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import { Suspense } from "react"
 import { AuthProvider } from "@/contexts/auth-context"
 import { SubscriptionProvider } from "@/contexts/subscription-context"
+import { InterfaceSettingsProvider } from "@/contexts/interface-settings-context"
 import { SessionSyncProvider } from "@/components/session-sync-provider"
+import { ThemeProvider } from "@/components/theme-provider"
 import "./globals.css"
 
 const inter = Inter({
@@ -17,6 +19,13 @@ const inter = Inter({
 const playfair = Playfair_Display({
   subsets: ["latin"],
   variable: "--font-playfair",
+  display: "swap",
+})
+
+const dmMono = DM_Mono({
+  subsets: ["latin"],
+  weight: ["300", "400", "500"],
+  variable: "--font-dm-mono",
   display: "swap",
 })
 
@@ -40,72 +49,26 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${playfair.variable}`}>
-      <body className="font-sans antialiased">
-        <AuthProvider>
-          <SubscriptionProvider>
-            <SessionSyncProvider>
-              <Suspense fallback={null}>{children}</Suspense>
-            </SessionSyncProvider>
-          </SubscriptionProvider>
-        </AuthProvider>
+    <html lang="en" suppressHydrationWarning className={`${inter.variable} ${playfair.variable} ${dmMono.variable}`}>
+      <body className="font-sans antialiased bg-background text-foreground">
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="light"
+          enableSystem
+          disableTransitionOnChange
+        >
+          <AuthProvider>
+            <SubscriptionProvider>
+              <InterfaceSettingsProvider>
+                <SessionSyncProvider>
+                  <Suspense fallback={null}>{children}</Suspense>
+                </SessionSyncProvider>
+              </InterfaceSettingsProvider>
+            </SubscriptionProvider>
+          </AuthProvider>
+        </ThemeProvider>
         <Analytics />
       </body>
     </html>
   )
 }
-
-// WITH THIS THE THEME WORKS
-
-// import type { Metadata } from "next"
-// import { Inter, Playfair_Display } from "next/font/google"
-// import { Navigation } from "@/components/navigation"
-// import { ThemeProvider } from "@/components/theme-provider"
-// import { AuthProvider } from "@/contexts/auth-context"
-// import { SubscriptionProvider } from "@/contexts/subscription-context"
-// import { Toaster } from "@/components/ui/sonner"
-// import "./globals.css"
-
-// const inter = Inter({
-//   subsets: ["latin"],
-//   variable: "--font-inter",
-// })
-
-// const playfair = Playfair_Display({
-//   subsets: ["latin"],
-//   variable: "--font-playfair",
-// })
-
-// export const metadata: Metadata = {
-//   title: "Lexora - Your Personalized Content Hub",
-//   description: "Aggregate and curate content from all your favorite sources",
-// }
-
-// export default function RootLayout({
-//   children,
-// }: {
-//   children: React.ReactNode
-// }) {
-//   return (
-//     <html lang="en" suppressHydrationWarning className={`${inter.variable} ${playfair.variable}`}>
-//       <body className="min-h-screen bg-background font-sans antialiased">
-//         <ThemeProvider
-//           attribute="class"
-//           defaultTheme="system"
-//           enableSystem
-//           disableTransitionOnChange
-//         >
-//           <AuthProvider>
-//             <SubscriptionProvider>
-//               <Navigation />
-//               <main className="min-h-screen">
-//                 {children}
-//               </main>
-//               <Toaster />
-//             </SubscriptionProvider>
-//           </AuthProvider>
-//         </ThemeProvider>
-//       </body>
-//     </html>
-//   )
-// }

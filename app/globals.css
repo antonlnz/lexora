@@ -55,19 +55,20 @@
   --accent-foreground: oklch(0.9 0.005 85);
   --destructive: oklch(0.396 0.141 25.723);
   --destructive-foreground: oklch(0.95 0.005 85);
-  --border: oklch(0.2 0.01 85 / 0.3);
-  --input: oklch(0.15 0.01 85 / 0.5);
-  --ring: oklch(0.9 0.005 85 / 0.3);
-  --glass: oklch(0.12 0.01 85 / 0.1);
-  --glass-border: oklch(0.3 0.01 85 / 0.2);
+  /* Increased border visibility in dark mode */
+  --border: oklch(0.35 0.01 85 / 0.5);
+  --input: oklch(0.18 0.01 85 / 0.6);
+  --ring: oklch(0.9 0.005 85 / 0.4);
+  --glass: oklch(0.12 0.01 85 / 0.15);
+  --glass-border: oklch(0.4 0.01 85 / 0.35);
   --sidebar: oklch(0.08 0.01 85 / 0.8);
   --sidebar-foreground: oklch(0.95 0.005 85);
   --sidebar-primary: oklch(0.9 0.005 85);
   --sidebar-primary-foreground: oklch(0.08 0.01 85);
   --sidebar-accent: oklch(0.18 0.01 85 / 0.8);
   --sidebar-accent-foreground: oklch(0.9 0.005 85);
-  --sidebar-border: oklch(0.2 0.01 85 / 0.3);
-  --sidebar-ring: oklch(0.9 0.005 85 / 0.3);
+  --sidebar-border: oklch(0.35 0.01 85 / 0.5);
+  --sidebar-ring: oklch(0.9 0.005 85 / 0.4);
 }
 
 @theme inline {
@@ -115,8 +116,12 @@
   body {
     @apply bg-background text-foreground;
     /* Added subtle background texture */
-    background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.15) 1px, transparent 0);
+    background-image: radial-gradient(circle at 1px 1px, var(--muted) 1px, transparent 0);
     background-size: 20px 20px;
+  }
+  
+  .dark body {
+    background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.05) 1px, transparent 0);
   }
   
   /* Support for dynamic viewport units on mobile Safari */
@@ -314,6 +319,31 @@
 
   .animate-float {
     animation: float 8s ease-in-out infinite;
+  }
+
+  /* Countdown animation for undo toast */
+  @keyframes countdown {
+    0% {
+      transform: scaleX(1);
+    }
+    100% {
+      transform: scaleX(0);
+    }
+  }
+
+  .animate-countdown {
+    animation: countdown 5s linear forwards;
+    transform-origin: left;
+  }
+
+  /* Circular countdown animation - smooth y continua */
+  @keyframes circularCountdown {
+    0% {
+      stroke-dashoffset: 0;
+    }
+    100% {
+      stroke-dashoffset: 116.24; /* 2 * PI * 18.5 (radius) */
+    }
   }
 
   /* Added collapsible sidebar styles */

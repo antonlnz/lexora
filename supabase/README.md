@@ -6,12 +6,12 @@ Este directorio contiene todas las migraciones, scripts y documentación para la
 
 ```
 supabase/
+├── database_schema.sql                     # 📋 Schema completo de la base de datos
+├── rls_policies.sql                        # 🔐 Políticas RLS optimizadas
 ├── migrations/
-│   ├── 00001_new_normalized_schema.sql    # Schema completo con todas las tablas
-│   └── 00002_rls_policies.sql             # Políticas de seguridad RLS
-├── SETUP_INSTRUCTIONS.md                   # 📖 Guía de instalación completa
-├── MIGRATION_SUMMARY.md                    # 📝 Resumen de cambios
-├── VIDEO_MEDIA_SUPPORT.md                  # 🎥 Documentación de soporte de videos
+│   ├── 00001_new_normalized_schema.sql    # (Legacy) Schema original
+│   ├── 00002_rls_policies.sql             # (Legacy) Políticas originales
+│   └── 00003_add_delete_policies.sql      # (Legacy) Políticas DELETE
 ├── verify_migration.sql                    # ✅ Script de verificación
 ├── maintenance_queries.sql                 # 🔧 Queries útiles
 └── README.md                               # Este archivo
@@ -19,18 +19,18 @@ supabase/
 
 ## 🚀 Quick Start
 
-### 1. Instalar Migraciones (Primera vez)
+### Instalación Limpia (Recomendado)
 
 ```bash
-# Con Supabase CLI (recomendado)
+# Con Supabase CLI
 supabase db reset
 
-# O con psql
-psql -U postgres -d lexora -f supabase/migrations/00001_new_normalized_schema.sql
-psql -U postgres -d lexora -f supabase/migrations/00002_rls_policies.sql
+# O ejecutar los archivos consolidados
+psql -U postgres -d lexora -f supabase/database_schema.sql
+psql -U postgres -d lexora -f supabase/rls_policies.sql
 ```
 
-### 2. Verificar Instalación
+### Verificar Instalación
 
 ```bash
 psql -U postgres -d lexora -f supabase/verify_migration.sql

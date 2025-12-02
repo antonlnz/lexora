@@ -38,71 +38,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Crear cliente una sola vez
   const [supabase] = useState(() => createClient())
 
-  // Helper para asegurar que el perfil existe
+  // Helper para asegurar que el perfil existe (ya no es necesario llamarlo por separado)
+  // Se mantiene por compatibilidad pero la lógica principal está en loadUserProfile
   const ensureProfileExists = useCallback(async (authUser: SupabaseUser) => {
-    try {
-      const { data: existingProfile } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('id', authUser.id)
-        .single()
-      
-      if (!existingProfile) {
-        // Crear el perfil si no existe
-        const { error: insertError } = await supabase
-          .from('profiles')
-          .insert({
-            id: authUser.id,
-            full_name: authUser.user_metadata?.name || authUser.email?.split('@')[0] || 'User',
-            avatar_url: authUser.user_metadata?.avatar_url,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          })
-        
-        if (insertError) {
-          console.warn("Could not create profile:", insertError)
-        }
-      }
-    } catch (error) {
-      // Silently fail - profile will be created later
-    }
-  }, [supabase])
+    // La creación del perfil ahora se maneja en loadUserProfile
+    // Este helper se mantiene vacío por compatibilidad
+  }, [])
 
   // Helper para cargar el perfil desde la base de datos
-  const loadUserProfile = useCallback(async (userId: string) => {
+  const loadUserProfile = useCallback(async (userId: string): Promise<Profile | null> => {
     try {
-      // Timeout de 8 segundos para la carga del perfil (más generoso)
-      const profilePromise = supabase
+      // Verificar que hay sesión activa antes de hacer la consulta
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        return null
+      }
+
+      // Intentar obtener el perfil - usar maybeSingle() en lugar de single() para evitar error si no existe
+      const { data: profile, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
-        .single()
-      
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Profile load timeout')), 8000)
-      )
-      
-      const { data: profile, error } = await Promise.race([
-        profilePromise,
-        timeoutPromise
-      ]) as any
+        .maybeSingle()
       
       if (error) {
-        // Si el perfil no existe (PGRST116), intentar crearlo
-        if (error.code === 'PGRST116') {
-          return null
-        }
-        
-        // Si es timeout, no es un error crítico
-        if (error.message === 'Profile load timeout') {
-          return null
-        }
-        
+        console.warn('Error loading profile:', error)
         return null
+      }
+      
+      // Si el perfil no existe, intentar crearlo
+      if (!profile) {
+        const user = session.user
+        const { data: newProfile, error: createError } = await supabase
+          .from('profiles')
+          .insert({
+            id: userId,
+            email: user.email,
+            full_name: user.user_metadata?.name || user.email?.split('@')[0] || 'User',
+            avatar_url: user.user_metadata?.avatar_url,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .select()
+          .single()
+        
+        if (createError) {
+          console.warn('Could not create profile:', createError)
+          return null
+        }
+        
+        return newProfile
       }
       
       return profile
     } catch (error) {
+      console.warn('Error in loadUserProfile:', error)
       return null
     }
   }, [supabase])
@@ -301,14 +291,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const completeOnboarding = async () => {
     if (supabaseUser) {
+      // Verificar que hay sesión activa antes de hacer la consulta
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        console.warn('No active session for completing onboarding')
+        return
+      }
+
       // Actualizar en la base de datos
-      await supabase
+      const { error } = await supabase
         .from('profiles')
         .update({
           onboarding_completed: true,
           onboarding_completed_at: new Date().toISOString()
         })
         .eq('id', supabaseUser.id)
+      
+      if (error) {
+        console.error('Error completing onboarding:', error)
+        return
+      }
       
       setHasCompletedOnboarding(true)
       router.push("/")

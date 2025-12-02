@@ -432,11 +432,6 @@ export default function ReadPageClient({ initialId }: { initialId?: string }) {
         onDownload={handleDownload}
         onShare={handleShare}
         onOpenOriginal={handleOpenOriginal}
-        isMultimedia={isMultimedia}
-        isPlaying={isPlaying}
-        isMuted={isMuted}
-        onTogglePlayback={togglePlayback}
-        onToggleMute={toggleMute}
         isScrolling={isScrolling}
         scrollProgress={readingProgress}
         fontSize={fontSize}

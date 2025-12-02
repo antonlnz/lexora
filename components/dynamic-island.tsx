@@ -13,10 +13,6 @@ import {
   Download, 
   Maximize2,
   ExternalLink,
-  Play,
-  Pause,
-  Volume2,
-  VolumeX,
   Circle,
   Settings,
   Type,
@@ -27,22 +23,22 @@ import {
   Plus,
   AlignLeft,
   Monitor,
+  Loader2,
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
+import { FolderPicker } from "@/components/folder-picker"
 
 interface DynamicIslandProps {
   onClose: () => void
   isSaved?: boolean
-  onSave?: () => void
+  onToggleArchive?: () => void
+  onSaveToFolder?: (folderId: string | null) => void
+  currentFolderId?: string | null
+  savingToFolder?: boolean
   onDownload: () => void
   onShare: () => void
   onOpenInNewTab?: () => void
   onOpenOriginal: () => void
-  isMultimedia?: boolean
-  isPlaying?: boolean
-  isMuted?: boolean
-  onTogglePlayback?: () => void
-  onToggleMute?: () => void
   isScrolling: boolean
   scrollProgress: number
   // Reading settings
@@ -71,6 +67,8 @@ const backgroundPresets = [
   { name: "Sepia", color: "#f4f1e8" },
   { name: "Light Gray", color: "#f8f9fa" },
   { name: "Warm White", color: "#fdf6e3" },
+  { name: "Dark Gray", color: "#1f2937" },
+  { name: "Black", color: "#000000" },
 ]
 
 const textColorPresets = [
@@ -79,21 +77,21 @@ const textColorPresets = [
   { name: "Warm Black", color: "#1f2937" },
   { name: "Brown", color: "#92400e" },
   { name: "Blue Gray", color: "#475569" },
+  { name: "Light Gray", color: "#d1d5db" },
+  { name: "White", color: "#ffffff" },
 ]
 
 export function DynamicIsland({
   onClose,
   isSaved = false,
-  onSave,
+  onToggleArchive,
+  onSaveToFolder,
+  currentFolderId = null,
+  savingToFolder = false,
   onDownload,
   onShare,
   onOpenInNewTab,
   onOpenOriginal,
-  isMultimedia = false,
-  isPlaying = false,
-  isMuted = false,
-  onTogglePlayback,
-  onToggleMute,
   isScrolling,
   scrollProgress,
   // Reading settings
@@ -119,6 +117,7 @@ export function DynamicIsland({
   const [isHovered, setIsHovered] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false)
   const islandRef = useRef<HTMLDivElement>(null)
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -135,10 +134,10 @@ export function DynamicIsland({
 
   // Auto-collapse when scrolling
   useEffect(() => {
-    if (isScrolling && isExpanded && !isSettingsOpen) {
+    if (isScrolling && isExpanded && !isSettingsOpen && !isFolderPickerOpen) {
       setIsExpanded(false)
     }
-  }, [isScrolling, isExpanded, isSettingsOpen])
+  }, [isScrolling, isExpanded, isSettingsOpen, isFolderPickerOpen])
 
   // En desktop, expandir con hover - con delay si está scrolling
   useEffect(() => {
@@ -161,7 +160,7 @@ export function DynamicIsland({
         // Si no está scrolling, expandir inmediatamente
         setIsExpanded(true)
       }
-    } else if (!isSettingsOpen) {
+    } else if (!isSettingsOpen && !isFolderPickerOpen) {
       // Delay de 0.5s antes de contraer cuando se deja de hacer hover
       hoverTimeoutRef.current = setTimeout(() => {
         setIsExpanded(false)
@@ -173,12 +172,12 @@ export function DynamicIsland({
         clearTimeout(hoverTimeoutRef.current)
       }
     }
-  }, [isHovered, isMobile, isScrolling, isSettingsOpen])
+  }, [isHovered, isMobile, isScrolling, isSettingsOpen, isFolderPickerOpen])
 
   // Cerrar al hacer clic fuera (solo si el popover no está abierto)
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (isExpanded && !isSettingsOpen && islandRef.current && !islandRef.current.contains(event.target as Node)) {
+      if (isExpanded && !isSettingsOpen && !isFolderPickerOpen && islandRef.current && !islandRef.current.contains(event.target as Node)) {
         setIsExpanded(false)
       }
     }
@@ -187,7 +186,7 @@ export function DynamicIsland({
       document.addEventListener('mousedown', handleClickOutside)
       return () => document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [isExpanded, isSettingsOpen])
+  }, [isExpanded, isSettingsOpen, isFolderPickerOpen])
 
   const toggleExpanded = () => {
     setIsExpanded(!isExpanded)
@@ -244,22 +243,43 @@ export function DynamicIsland({
         }}
       >
         <motion.div
-          className="glass-card rounded-full flex items-center gap-2 shadow-2xl backdrop-blur-xl overflow-hidden relative"
+          className={`rounded-full flex items-center gap-2 shadow-2xl backdrop-blur-xl overflow-hidden relative ${
+            isDarkMode 
+              ? 'bg-zinc-900/90 border-2 border-zinc-700/50' 
+              : 'glass-card'
+          }`}
           style={{
-            border: '2px solid transparent',
-            backgroundImage: `
-              linear-gradient(#ffffff, #ffffff),
-              conic-gradient(
-                from -90deg,
-                rgb(59, 130, 246) 0%,
-                rgb(59, 130, 246) ${scrollProgress}%,
-                rgba(148, 163, 184, 0.2) ${scrollProgress}%,
-                rgba(148, 163, 184, 0.2) 100%
-              )
-            `,
-            backgroundOrigin: 'border-box',
-            backgroundClip: 'padding-box, border-box',
-            boxShadow: '0 0 6px rgba(59, 130, 246, 0.4)',
+            ...(isDarkMode ? {
+              boxShadow: `0 0 6px rgba(59, 130, 246, 0.4), 0 0 20px rgba(0, 0, 0, 0.5)`,
+              border: '2px solid transparent',
+              backgroundImage: `
+                linear-gradient(rgb(24, 24, 27), rgb(24, 24, 27)),
+                conic-gradient(
+                  from -90deg,
+                  rgb(59, 130, 246) 0%,
+                  rgb(59, 130, 246) ${scrollProgress}%,
+                  rgba(100, 100, 120, 0.3) ${scrollProgress}%,
+                  rgba(100, 100, 120, 0.3) 100%
+                )
+              `,
+              backgroundOrigin: 'border-box',
+              backgroundClip: 'padding-box, border-box',
+            } : {
+              border: '2px solid transparent',
+              backgroundImage: `
+                linear-gradient(#ffffff, #ffffff),
+                conic-gradient(
+                  from -90deg,
+                  rgb(59, 130, 246) 0%,
+                  rgb(59, 130, 246) ${scrollProgress}%,
+                  rgba(148, 163, 184, 0.2) ${scrollProgress}%,
+                  rgba(148, 163, 184, 0.2) 100%
+                )
+              `,
+              backgroundOrigin: 'border-box',
+              backgroundClip: 'padding-box, border-box',
+              boxShadow: '0 0 6px rgba(59, 130, 246, 0.4)',
+            }),
             maxWidth: isExpanded ? 'calc(100vw - 32px)' : '56px',
           }}
           animate={{
@@ -290,7 +310,7 @@ export function DynamicIsland({
             {isExpanded ? (
               <motion.div
                 key="expanded"
-                className="flex items-center gap-2 max-w-full"
+                className={`flex items-center gap-2 max-w-full ${isDarkMode ? 'text-zinc-200' : 'text-zinc-700'}`}
                 initial={{ opacity: 0 }}
                 animate={{ 
                   opacity: 1,
@@ -322,64 +342,49 @@ export function DynamicIsland({
                       <X className="h-4 w-4" />
                     </Button>
 
-                    <div className="w-px h-6 bg-border/50 shrink-0" />
+                    <div className={`w-px h-6 shrink-0 ${isDarkMode ? 'bg-zinc-600' : 'bg-border/50'}`} />
                   </>
                 )}
 
                 {/* Scrollable container for action buttons - only on mobile */}
                 <div className="flex items-center gap-2 md:overflow-visible overflow-x-auto scrollbar-hide max-w-full">
-                  {/* Multimedia controls */}
-                  {isMultimedia && onTogglePlayback && onToggleMute && (
-                    <>
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onTogglePlayback()
-                        }}
-                        className="h-9 w-9 p-0 rounded-full hover:bg-primary/10 transition-colors hover-lift-subtle shrink-0"
-                        title={isPlaying ? "Pause" : "Play"}
-                      >
-                        {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                      </Button>
-
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onToggleMute()
-                        }}
-                        className="h-9 w-9 p-0 rounded-full hover:bg-primary/10 transition-colors hover-lift-subtle shrink-0"
-                        title={isMuted ? "Unmute" : "Mute"}
-                      >
-                        {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-                      </Button>
-
-                      <div className="w-px h-6 bg-border/50 shrink-0" />
-                    </>
-                  )}
-
                   {/* Action buttons */}
-                  {onSave && (
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onSave()
-                    }}
-                    className="h-9 w-9 p-0 rounded-full hover:bg-primary/10 transition-colors hover-lift-subtle shrink-0"
-                    title={isSaved ? "Unsave" : "Save"}
-                  >
-                    {isSaved ? (
+                  {isSaved ? (
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onToggleArchive?.()
+                      }}
+                      className="h-9 w-9 p-0 rounded-full hover:bg-primary/10 transition-colors hover-lift-subtle shrink-0"
+                      title="Quitar del archivo"
+                    >
                       <BookmarkCheck className="h-4 w-4 text-primary" />
-                    ) : (
-                      <Bookmark className="h-4 w-4" />
-                    )}
-                  </Button>
-                  )}
+                    </Button>
+                  ) : onSaveToFolder ? (
+                    <FolderPicker
+                      selectedFolderId={currentFolderId}
+                      onSelect={onSaveToFolder}
+                      onOpenChange={setIsFolderPickerOpen}
+                      trigger={
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="h-9 w-9 p-0 rounded-full hover:bg-primary/10 transition-colors hover-lift-subtle shrink-0"
+                          onClick={(e) => e.stopPropagation()}
+                          disabled={savingToFolder}
+                          title="Guardar en carpeta"
+                        >
+                          {savingToFolder ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Bookmark className="h-4 w-4" />
+                          )}
+                        </Button>
+                      }
+                    />
+                  ) : null}
 
                   <Button 
                     variant="ghost" 
@@ -462,7 +467,7 @@ export function DynamicIsland({
                   {/* Reading Settings */}
                   {setFontSize && (
                     <>
-                      <div className="w-px h-6 bg-border/50 shrink-0" />
+                      <div className={`w-px h-6 shrink-0 ${isDarkMode ? 'bg-zinc-600' : 'bg-border/50'}`} />
                       
                       <Popover open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
                         <PopoverTrigger asChild>
@@ -682,7 +687,7 @@ export function DynamicIsland({
                 }}
               >
                 {/* Solo mostrar círculo en estado contraído */}
-                <Circle className="h-5 w-5" />
+                <Circle className={`h-5 w-5 ${isDarkMode ? 'text-zinc-300' : 'text-zinc-600'}`} />
               </motion.div>
             )}
           </AnimatePresence>

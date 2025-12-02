@@ -270,7 +270,12 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
                 const result = await detectSourceTypeFromUrl(url)
                 if (result.suggestedTitle) {
                   // Siempre actualizar el nombre cuando cambia la URL
-                  setFormData((prev) => ({ ...prev, name: result.suggestedTitle! }))
+                  setFormData((prev) => ({ 
+                    ...prev, 
+                    name: result.suggestedTitle!,
+                    // También actualizar la descripción si existe
+                    description: result.suggestedDescription || prev.description 
+                  }))
                 }
                 // Guardar el favicon/avatar del canal si existe
                 if (result.faviconUrl) {

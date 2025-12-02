@@ -3,7 +3,7 @@
 import { DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
 
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { useSubscription } from "@/contexts/subscription-context"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -38,10 +38,12 @@ import {
   Download,
   Loader2,
   Undo2,
+  AlertTriangle,
+  Bookmark,
 } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
-import { sourceService, type SourceWithUserData } from "@/lib/services/source-service"
+import { sourceService, type SourceWithUserData, type SourceDeletionInfo } from "@/lib/services/source-service"
 import { 
   SOURCE_TYPE_ICONS,
   SOURCE_TYPE_LABELS,
@@ -56,7 +58,7 @@ import type { SourceType } from "@/types/database"
 type Source = SourceWithUserData
 
 export function SourcesManager() {
-  const { canAddSource, getSourceLimit, currentPlan } = useSubscription()
+  const { canAddSource, getSourceLimit, currentPlan, hasFeature } = useSubscription()
   const [sources, setSources] = useState<Source[]>([])
   const [selectedSource, setSelectedSource] = useState<Source | null>(null)
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
@@ -64,8 +66,19 @@ export function SourcesManager() {
   const [isSuggestionsOpen, setIsSuggestionsOpen] = useState(false)
   const [showLimitWarning, setShowLimitWarning] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  
+  // Estados para el flujo de eliminación
   const [deleteConfirmSource, setDeleteConfirmSource] = useState<Source | null>(null)
-  const [deletedSource, setDeletedSource] = useState<{ source: Source; timeout: NodeJS.Timeout } | null>(null)
+  const [deletionInfo, setDeletionInfo] = useState<SourceDeletionInfo | null>(null)
+  const [isLoadingDeletionInfo, setIsLoadingDeletionInfo] = useState(false)
+  const [showSavedContentDialog, setShowSavedContentDialog] = useState(false)
+  const [showFinalDeleteConfirm, setShowFinalDeleteConfirm] = useState(false)
+  const [deleteSavedContent, setDeleteSavedContent] = useState(false)
+  const [deletedSource, setDeletedSource] = useState<{ 
+    source: Source
+    deleteSaved: boolean
+    timeout: NodeJS.Timeout 
+  } | null>(null)
 
   // Cargar fuentes al montar el componente
   useEffect(() => {
@@ -109,11 +122,70 @@ export function SourcesManager() {
     }
   }
 
-  const handleDeleteSource = async (source: Source) => {
-    // Cerrar el diálogo de confirmación
-    setDeleteConfirmSource(null)
+  // Paso 1: Usuario hace clic en eliminar - cargar info y mostrar primer diálogo
+  const handleInitiateDelete = async (source: Source) => {
+    setDeleteConfirmSource(source)
+    setIsLoadingDeletionInfo(true)
+    
+    try {
+      const info = await sourceService.getSourceDeletionInfo(source.id)
+      setDeletionInfo(info)
+    } catch (error) {
+      console.error('Error getting deletion info:', error)
+      setDeletionInfo(null)
+    } finally {
+      setIsLoadingDeletionInfo(false)
+    }
+  }
 
-    // Eliminar de la lista inmediatamente
+  // Paso 2: Usuario confirma eliminación inicial
+  const handleConfirmDelete = async () => {
+    if (!deleteConfirmSource || !deletionInfo) return
+
+    // Si tiene contenido guardado, preguntar qué hacer
+    if (deletionInfo.hasSavedContent) {
+      // Cerrar primer diálogo pero mantener la referencia a la fuente
+      // NO hacer setDeleteConfirmSource(null) aquí
+      setShowSavedContentDialog(true)
+      return
+    }
+
+    // No tiene contenido guardado, proceder directamente
+    await executeDelete(deleteConfirmSource, false)
+  }
+
+  // Paso 3a: Usuario decide qué hacer con el contenido guardado
+  const handleSavedContentChoice = (keepSaved: boolean) => {
+    if (!deleteConfirmSource) return
+    
+    setShowSavedContentDialog(false)
+    
+    if (keepSaved) {
+      // Mantener guardados - proceder con eliminación
+      executeDelete(deleteConfirmSource, false)
+    } else {
+      // Quiere eliminar también los guardados - pedir confirmación final
+      setDeleteSavedContent(true)
+      setShowFinalDeleteConfirm(true)
+    }
+  }
+
+  // Paso 3b: Confirmación final para eliminar contenido guardado
+  const handleFinalDeleteConfirm = () => {
+    if (!deleteConfirmSource) return
+    
+    setShowFinalDeleteConfirm(false)
+    executeDelete(deleteConfirmSource, true)
+  }
+
+  // Ejecutar la eliminación con undo de 5 segundos
+  const executeDelete = async (source: Source, deleteSaved: boolean) => {
+    // Limpiar estados de diálogos
+    setDeleteConfirmSource(null)
+    setDeletionInfo(null)
+    setDeleteSavedContent(false)
+
+    // Eliminar de la lista inmediatamente (optimistic update)
     setSources((prev) => prev.filter((s) => s.id !== source.id))
     if (selectedSource?.id === source.id) {
       setSelectedSource(null)
@@ -121,18 +193,26 @@ export function SourcesManager() {
 
     // Configurar timeout de 5 segundos para eliminar permanentemente
     const timeout = setTimeout(async () => {
+      console.log(`[executeDelete] Timeout completed, executing deleteSourceCompletely for ${source.id}`)
       try {
-        await sourceService.unsubscribeFromSource(source.id)
+        await sourceService.deleteSourceCompletely(source.id, deleteSaved)
+        console.log(`[executeDelete] Successfully deleted source ${source.id}`)
         setDeletedSource(null)
       } catch (error) {
+        console.error(`[executeDelete] Error deleting source ${source.id}:`, error)
         // Si falla, restaurar la fuente
         setSources((prev) => [...prev, source])
         toast.error("Error al eliminar fuente")
+        setDeletedSource(null)
       }
     }, 5000)
 
-    setDeletedSource({ source, timeout })
-    toast.success("Fuente eliminada")
+    setDeletedSource({ source, deleteSaved, timeout })
+    toast.success(
+      deleteSaved 
+        ? "Fuente y contenido guardado eliminados" 
+        : "Fuente eliminada"
+    )
   }
 
   const handleUndoDelete = () => {
@@ -145,6 +225,15 @@ export function SourcesManager() {
     setSources((prev) => [...prev, deletedSource.source])
     setDeletedSource(null)
     toast.success("Eliminación cancelada")
+  }
+
+  // Cancelar el flujo de eliminación
+  const handleCancelDelete = () => {
+    setDeleteConfirmSource(null)
+    setDeletionInfo(null)
+    setShowSavedContentDialog(false)
+    setShowFinalDeleteConfirm(false)
+    setDeleteSavedContent(false)
   }
 
   const handleUpdateSource = async (updatedSource: Source) => {
@@ -167,6 +256,59 @@ export function SourcesManager() {
       return
     }
     setIsAddDialogOpen(true)
+  }
+
+  // Exportar fuentes como OPML
+  const handleExportSources = () => {
+    // Verificar feature de exportación
+    if (!hasFeature('export_data')) {
+      toast.error("Función Pro", {
+        description: "La exportación de fuentes está disponible solo para usuarios Pro.",
+      })
+      return
+    }
+
+    try {
+      // Generar OPML
+      const opmlContent = `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head>
+    <title>Lexora Sources Export</title>
+    <dateCreated>${new Date().toISOString()}</dateCreated>
+  </head>
+  <body>
+${sources.map(source => {
+  const htmlUrl = source.metadata?.siteUrl || source.metadata?.htmlUrl || ''
+  return `    <outline type="rss" text="${escapeXml(source.title)}" title="${escapeXml(source.title)}" xmlUrl="${escapeXml(source.url)}" htmlUrl="${escapeXml(htmlUrl)}" />`
+}).join('\n')}
+  </body>
+</opml>`
+
+      const blob = new Blob([opmlContent], { type: 'text/xml' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'lexora-sources.opml'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+
+      toast.success("Fuentes exportadas correctamente")
+    } catch (error) {
+      console.error('Error exporting sources:', error)
+      toast.error("Error al exportar fuentes")
+    }
+  }
+
+  // Helper para escapar XML
+  const escapeXml = (str: string) => {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;')
   }
 
   const activeSources = sources.filter((source) => source.user_source.is_active)
@@ -198,7 +340,7 @@ export function SourcesManager() {
                 {sources.length} / {sourceLimit} Sources
               </h3>
               <p className="text-sm text-muted-foreground">
-                {currentPlan === "free" ? "Free Plan" : currentPlan === "basic" ? "Basic Plan" : "Pro Plan"}
+                {currentPlan === "free" ? "Free Plan" : "Pro Plan"}
               </p>
             </div>
           </div>
@@ -263,7 +405,7 @@ export function SourcesManager() {
             </Button>
             <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="shrink-0">
+              <Button variant="outline" size="icon" className="shrink-0 hover-lift-subtle">
                 <MoreVertical className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
@@ -277,7 +419,7 @@ export function SourcesManager() {
                 Import from OPML
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem>
+              <DropdownMenuItem onClick={handleExportSources}>
                 <Download className="h-4 w-4 mr-2" />
                 Export Sources
               </DropdownMenuItem>
@@ -292,7 +434,7 @@ export function SourcesManager() {
               <SourcesList
                 sources={sources}
                 onToggle={handleToggleSource}
-                onDelete={setDeleteConfirmSource}
+                onDelete={handleInitiateDelete}
                 onSelect={setSelectedSource}
                 selectedId={selectedSource?.id}
                 onUpdate={handleUpdateSource}
@@ -303,7 +445,7 @@ export function SourcesManager() {
               <SourcesList
                 sources={activeSources}
                 onToggle={handleToggleSource}
-                onDelete={setDeleteConfirmSource}
+                onDelete={handleInitiateDelete}
                 onSelect={setSelectedSource}
                 selectedId={selectedSource?.id}
                 onUpdate={handleUpdateSource}
@@ -314,7 +456,7 @@ export function SourcesManager() {
               <SourcesList
                 sources={inactiveSources}
                 onToggle={handleToggleSource}
-                onDelete={setDeleteConfirmSource}
+                onDelete={handleInitiateDelete}
                 onSelect={setSelectedSource}
                 selectedId={selectedSource?.id}
                 onUpdate={handleUpdateSource}
@@ -355,35 +497,108 @@ export function SourcesManager() {
         onAdd={loadSources}
       />
 
-      <AlertDialog open={!!deleteConfirmSource} onOpenChange={(open) => !open && setDeleteConfirmSource(null)}>
+      {/* Diálogo 1: Confirmación inicial de eliminación */}
+      <AlertDialog open={!!deleteConfirmSource && !showSavedContentDialog && !showFinalDeleteConfirm} onOpenChange={(open) => !open && handleCancelDelete()}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>¿Estás seguro?</AlertDialogTitle>
             <AlertDialogDescription>
-              Estás a punto de eliminar la fuente <strong>{deleteConfirmSource?.title}</strong>. 
-              Esta acción se puede deshacer en los próximos 5 segundos.
+              {isLoadingDeletionInfo ? (
+                <span>Comprobando información...</span>
+              ) : (
+                <>
+                  Estás a punto de eliminar la fuente <strong>{deleteConfirmSource?.title}</strong>.
+                  {deletionInfo?.hasSavedContent && (
+                    <span className="block mt-2 text-amber-600">
+                      Tienes {deletionInfo.savedContentCount} elemento(s) guardado(s) de esta fuente.
+                    </span>
+                  )}
+                  <span className="block mt-2">Esta acción se puede deshacer en los próximos 5 segundos.</span>
+                </>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogCancel onClick={handleCancelDelete}>Cancelar</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => deleteConfirmSource && handleDeleteSource(deleteConfirmSource)}
+              onClick={(e) => {
+                e.preventDefault()
+                handleConfirmDelete()
+              }}
+              disabled={isLoadingDeletionInfo}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Eliminar
+              {isLoadingDeletionInfo ? "Comprobando..." : "Eliminar"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Botón de Undo */}
+      {/* Diálogo 2: Preguntar sobre contenido guardado */}
+      <AlertDialog open={showSavedContentDialog} onOpenChange={(open) => !open && handleCancelDelete()}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Qué hacer con el contenido guardado?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tienes <strong>{deletionInfo?.savedContentCount || 0}</strong> elemento(s) guardado(s) de la fuente <strong>{deleteConfirmSource?.title}</strong>.
+              <span className="block mt-2">¿Quieres mantenerlos o eliminarlos también?</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel onClick={handleCancelDelete}>Cancelar</AlertDialogCancel>
+            <Button
+              variant="outline"
+              onClick={() => handleSavedContentChoice(true)}
+            >
+              Mantener guardados
+            </Button>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault()
+                handleSavedContentChoice(false)
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Eliminar todo
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Diálogo 3: Confirmación final para eliminar contenido guardado */}
+      <AlertDialog open={showFinalDeleteConfirm} onOpenChange={(open) => !open && handleCancelDelete()}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar eliminación completa</AlertDialogTitle>
+            <AlertDialogDescription>
+              Vas a eliminar permanentemente la fuente <strong>{deleteConfirmSource?.title}</strong> y todo su contenido guardado ({deletionInfo?.savedContentCount || 0} elemento(s)).
+              <span className="block mt-2 font-medium text-destructive">Esta acción se puede deshacer en los próximos 5 segundos.</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleCancelDelete}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault()
+                handleFinalDeleteConfirm()
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Eliminar todo
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Botón de Undo con cuenta atrás circular */}
       {deletedSource && (
         <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5">
-          <Card className="glass-card p-4 shadow-lg border-primary/20">
-            <div className="flex items-center gap-3">
+          <Card className="glass-card shadow-lg border-primary/20 p-4">
+            <div className="flex items-center gap-4">
+              <CircularCountdown seconds={5} />
               <div className="flex-1">
                 <p className="text-sm font-medium">Fuente eliminada</p>
-                <p className="text-xs text-muted-foreground">{deletedSource.source.title}</p>
+                <p className="text-xs text-muted-foreground truncate max-w-[150px]">{deletedSource.source.title}</p>
               </div>
               <Button
                 size="sm"
@@ -398,6 +613,75 @@ export function SourcesManager() {
           </Card>
         </div>
       )}
+    </div>
+  )
+}
+
+// Componente de cuenta atrás circular con animación CSS pura
+function CircularCountdown({ seconds }: { seconds: number }) {
+  const [timeLeft, setTimeLeft] = useState(seconds)
+  
+  // Solo actualizar el número cada segundo
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(interval)
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    
+    return () => clearInterval(interval)
+  }, [seconds])
+  
+  // SVG circle parameters
+  const size = 40
+  const strokeWidth = 3
+  const radius = (size - strokeWidth) / 2
+  const circumference = 2 * Math.PI * radius
+  
+  return (
+    <div className="relative" style={{ width: size, height: size }}>
+      <svg
+        width={size}
+        height={size}
+        className="transform -rotate-90"
+      >
+        {/* Background circle */}
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={strokeWidth}
+          className="text-muted/30"
+        />
+        {/* Progress circle - animación CSS smooth */}
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={strokeWidth}
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          className="text-primary"
+          style={{
+            strokeDashoffset: 0,
+            animation: `circularCountdown ${seconds}s linear forwards`,
+            // Variable CSS para la circunferencia
+            ['--circumference' as string]: circumference,
+          }}
+        />
+      </svg>
+      {/* Número del segundo */}
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-sm font-semibold tabular-nums">{timeLeft}</span>
+      </div>
     </div>
   )
 }
@@ -441,8 +725,17 @@ function SourcesList({ sources, onToggle, onDelete, onSelect, selectedId, onUpda
             >
               <div className="flex items-start gap-3">
                 {source.favicon_url ? (
-                  <div className="p-2 rounded-lg bg-muted shrink-0">
-                    <img src={source.favicon_url} alt="" className="h-5 w-5" />
+                  <div className="w-10 h-10 rounded-full overflow-hidden bg-muted shrink-0 flex items-center justify-center">
+                    <img 
+                      src={source.favicon_url} 
+                      alt="" 
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        // Fallback to icon on error
+                        e.currentTarget.parentElement!.innerHTML = ''
+                        e.currentTarget.parentElement!.className = `p-2 rounded-lg ${typeColorClass} shrink-0`
+                      }}
+                    />
                   </div>
                 ) : (
                   <div className={`p-2 rounded-lg ${typeColorClass} shrink-0`}>
@@ -550,11 +843,11 @@ function SourceSettings({ source, onUpdate, isMobile = false }: SourceSettingsPr
       <div className="flex items-start justify-between mb-4">
         <h3 className="text-lg font-semibold">Source Settings</h3>
         {localSource.favicon_url ? (
-          <div className="p-2 rounded-lg bg-muted shrink-0">
+          <div className="w-10 h-10 rounded-full overflow-hidden bg-muted shrink-0 flex items-center justify-center">
             <img 
               src={localSource.favicon_url} 
               alt="" 
-              className="h-6 w-6"
+              className="w-full h-full object-cover"
               onError={(e) => {
                 e.currentTarget.style.display = "none"
               }}

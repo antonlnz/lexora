@@ -18,6 +18,7 @@ export interface ClientDetectionResult {
   detected: boolean
   sourceType?: SourceType
   suggestedTitle?: string
+  suggestedDescription?: string
   transformedUrl?: string
   faviconUrl?: string
   // Información de redirección para YouTube (handles secundarios)
@@ -96,8 +97,9 @@ export async function detectSourceType(url: string): Promise<ClientDetectionResu
       const channelMatch = url.match(/(?:@|\/c\/|\/user\/|\/channel\/)([\w-]+)/)
       const isChannel = !!channelMatch
       
-      // Intentar obtener la info completa del canal (nombre y avatar)
+      // Intentar obtener la info completa del canal (nombre, avatar y descripción)
       let channelName: string | null = null
+      let channelDescription: string | null = null
       let avatarUrl: string | null = null
       let wasRedirected = false
       let originalHandle: string | null = null
@@ -107,6 +109,7 @@ export async function detectSourceType(url: string): Promise<ClientDetectionResu
         const channelInfo = await getYoutubeChannelInfo(url)
         if (channelInfo) {
           channelName = channelInfo.channelName
+          channelDescription = channelInfo.channelDescription
           avatarUrl = channelInfo.avatarUrl
           wasRedirected = channelInfo.wasRedirected || false
           originalHandle = channelInfo.originalHandle || null
@@ -127,6 +130,7 @@ export async function detectSourceType(url: string): Promise<ClientDetectionResu
         detected: true,
         sourceType: isChannel ? 'youtube_channel' : 'youtube_video',
         suggestedTitle,
+        suggestedDescription: channelDescription || undefined,
         faviconUrl: avatarUrl || undefined,
         wasRedirected,
         originalHandle,
@@ -293,6 +297,7 @@ export async function getYoutubeChannelName(channelUrl: string): Promise<string 
  */
 export async function getYoutubeChannelInfo(channelUrl: string): Promise<{
   channelName: string | null
+  channelDescription: string | null
   avatarUrl: string | null
   feedUrl: string | null
   channelId: string | null
@@ -317,6 +322,7 @@ export async function getYoutubeChannelInfo(channelUrl: string): Promise<{
     const data = await response.json()
     return {
       channelName: data.channelName || null,
+      channelDescription: data.channelDescription || null,
       avatarUrl: data.avatarUrl || null,
       feedUrl: data.feedUrl || null,
       channelId: data.channelId || null,

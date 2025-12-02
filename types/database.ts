@@ -119,8 +119,11 @@ export interface Database {
         Row: {
           user_id: string
           font_family: string
-          font_size: 'small' | 'medium' | 'large' | 'x-large'
-          line_height: 'compact' | 'comfortable' | 'spacious'
+          font_size: number
+          line_height: number
+          max_width: number
+          background_color: string
+          text_color: string
           text_align: 'left' | 'justify'
           theme: 'light' | 'dark' | 'auto'
           reading_speed: number
@@ -132,8 +135,11 @@ export interface Database {
         Insert: {
           user_id: string
           font_family?: string
-          font_size?: 'small' | 'medium' | 'large' | 'x-large'
-          line_height?: 'compact' | 'comfortable' | 'spacious'
+          font_size?: number
+          line_height?: number
+          max_width?: number
+          background_color?: string
+          text_color?: string
           text_align?: 'left' | 'justify'
           theme?: 'light' | 'dark' | 'auto'
           reading_speed?: number
@@ -144,8 +150,11 @@ export interface Database {
         }
         Update: {
           font_family?: string
-          font_size?: 'small' | 'medium' | 'large' | 'x-large'
-          line_height?: 'compact' | 'comfortable' | 'spacious'
+          font_size?: number
+          line_height?: number
+          max_width?: number
+          background_color?: string
+          text_color?: string
           text_align?: 'left' | 'justify'
           theme?: 'light' | 'dark' | 'auto'
           reading_speed?: number
@@ -158,6 +167,8 @@ export interface Database {
         Row: {
           user_id: string
           theme_preference: 'light' | 'dark' | 'system'
+          font_family: string
+          font_size: number
           sidebar_collapsed: boolean
           view_mode: 'compact' | 'comfortable' | 'spacious'
           items_per_page: number
@@ -170,6 +181,8 @@ export interface Database {
         Insert: {
           user_id: string
           theme_preference?: 'light' | 'dark' | 'system'
+          font_family?: string
+          font_size?: number
           sidebar_collapsed?: boolean
           view_mode?: 'compact' | 'comfortable' | 'spacious'
           items_per_page?: number
@@ -181,6 +194,8 @@ export interface Database {
         }
         Update: {
           theme_preference?: 'light' | 'dark' | 'system'
+          font_family?: string
+          font_size?: number
           sidebar_collapsed?: boolean
           view_mode?: 'compact' | 'comfortable' | 'spacious'
           items_per_page?: number
@@ -624,6 +639,7 @@ export interface Database {
           is_read: boolean
           is_archived: boolean
           is_favorite: boolean
+          folder_id: string | null
           reading_progress: number
           time_spent: number
           notes: string | null
@@ -642,6 +658,7 @@ export interface Database {
           is_read?: boolean
           is_archived?: boolean
           is_favorite?: boolean
+          folder_id?: string | null
           reading_progress?: number
           time_spent?: number
           notes?: string | null
@@ -656,6 +673,7 @@ export interface Database {
           is_read?: boolean
           is_archived?: boolean
           is_favorite?: boolean
+          folder_id?: string | null
           reading_progress?: number
           time_spent?: number
           notes?: string | null
@@ -663,6 +681,39 @@ export interface Database {
           archived_at?: string | null
           favorited_at?: string | null
           last_accessed_at?: string | null
+          updated_at?: string
+        }
+      }
+      // ===== CARPETAS DE ARCHIVO =====
+      archive_folders: {
+        Row: {
+          id: string
+          user_id: string
+          name: string
+          icon: string | null
+          color: string | null
+          parent_id: string | null
+          position: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          name: string
+          icon?: string | null
+          color?: string | null
+          parent_id?: string | null
+          position?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          name?: string
+          icon?: string | null
+          color?: string | null
+          parent_id?: string | null
+          position?: number
           updated_at?: string
         }
       }
@@ -779,6 +830,16 @@ export type PodcastContentUpdate = Database['public']['Tables']['podcast_content
 export type UserContent = Database['public']['Tables']['user_content']['Row']
 export type UserContentInsert = Database['public']['Tables']['user_content']['Insert']
 export type UserContentUpdate = Database['public']['Tables']['user_content']['Update']
+
+// Carpetas de archivo
+export type ArchiveFolder = Database['public']['Tables']['archive_folders']['Row']
+export type ArchiveFolderInsert = Database['public']['Tables']['archive_folders']['Insert']
+export type ArchiveFolderUpdate = Database['public']['Tables']['archive_folders']['Update']
+
+// Tipo extendido para carpetas con hijos (para jerarquía)
+export interface ArchiveFolderWithChildren extends ArchiveFolder {
+  children?: ArchiveFolderWithChildren[]
+}
 
 // Colecciones
 export type Collection = Database['public']['Tables']['collections_new']['Row']
