@@ -417,20 +417,34 @@ export class SourceService {
 
     try {
       // Obtener información de la fuente
-      const { data: source, error: sourceError } = await supabase
+      const { data: sources, error: sourceError } = await supabase
         .from('content_sources')
         .select('*')
         .eq('id', sourceId)
-        .single()
 
       if (sourceError) {
         console.error('[deleteSourceCompletely] Error fetching source:', sourceError)
-        throw new Error('Source not found')
+        throw new Error('Error fetching source')
       }
 
+      const source = sources?.[0]
+
       if (!source) {
-        console.log('[deleteSourceCompletely] Source not found')
-        throw new Error('Source not found')
+        // La fuente ya no existe - esto es válido, simplemente eliminamos la suscripción del usuario
+        console.log('[deleteSourceCompletely] Source not found in content_sources, cleaning up user_sources only')
+        
+        const { error: userSourceError } = await supabase
+          .from('user_sources')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('source_id', sourceId)
+
+        if (userSourceError) {
+          console.error('[deleteSourceCompletely] Error deleting user_source:', userSourceError)
+        }
+        
+        console.log('[deleteSourceCompletely] Cleanup completed for non-existent source')
+        return
       }
 
       console.log(`[deleteSourceCompletely] Found source: ${source.title} (type: ${source.source_type})`)

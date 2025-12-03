@@ -32,6 +32,7 @@ import type { SourceType } from "@/types/database"
 import { 
   detectSourceType as detectSourceTypeFromUrl, 
   getYoutubeRssFeedUrl,
+  isValidRssFeed,
 } from "@/lib/source-handlers/client"
 
 interface AddSourceDialogProps {
@@ -179,6 +180,46 @@ function validateUrl(url: string): { isValid: boolean; message: string } {
   }
 }
 
+/**
+ * Normaliza una URL para comparación (elimina trailing slashes, www, etc.)
+ */
+function normalizeUrlForComparison(url: string): string {
+  try {
+    const u = new URL(url)
+    // Normalizar: eliminar www, trailing slash, lowercase
+    let normalized = u.hostname.replace(/^www\./, '').toLowerCase()
+    normalized += u.pathname.replace(/\/$/, '').toLowerCase()
+    // Para YouTube RSS feeds, extraer el channel_id como clave única
+    if (u.hostname.includes('youtube.com') && u.pathname.includes('/feeds/videos.xml')) {
+      const channelId = u.searchParams.get('channel_id')
+      if (channelId) {
+        return `youtube:${channelId}`
+      }
+    }
+    return normalized
+  } catch {
+    return url.toLowerCase()
+  }
+}
+
+/**
+ * Verifica si una URL ya existe en la lista de fuentes del usuario
+ */
+function checkDuplicate(url: string, existingSources: string[]): string | null {
+  const normalized = normalizeUrlForComparison(url)
+  const isDuplicate = existingSources.some(existing => {
+    // Comparación exacta
+    if (existing === normalized) return true
+    // Para YouTube, también comparar por channel ID si ambas son del mismo canal
+    if (normalized.startsWith('youtube:') && existing.startsWith('youtube:')) {
+      return normalized === existing
+    }
+    return false
+  })
+  
+  return isDuplicate ? "Esta fuente ya está en tu lista" : null
+}
+
 function extractSourceName(url: string, type: UISourceType): string {
   try {
     const urlObj = new URL(url)
@@ -234,6 +275,8 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
   })
   const [userSourcesCount, setUserSourcesCount] = useState(0)
   const [isLoadingSources, setIsLoadingSources] = useState(false)
+  const [existingSources, setExistingSources] = useState<string[]>([])
+  const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null)
 
   // Cargar el número actual de fuentes cuando se abre el diálogo
   useEffect(() => {
@@ -242,6 +285,8 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
       sourceService.getUserSources()
         .then(sources => {
           setUserSourcesCount(sources.length)
+          // Guardar las URLs de fuentes existentes para detectar duplicados
+          setExistingSources(sources.map(s => normalizeUrlForComparison(s.url)))
         })
         .catch(error => {
           console.error("Error loading sources count:", error)
@@ -255,12 +300,41 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
   useEffect(() => {
     if (url) {
       setIsDetecting(true)
+      setDuplicateWarning(null)
       const timer = setTimeout(async () => {
         const validation = validateUrl(url)
         setUrlValidation(validation)
 
         if (validation.isValid) {
-          const detectedType = detectUISourceType(url)
+          // Verificar duplicados primero
+          const duplicate = checkDuplicate(url, existingSources)
+          if (duplicate) {
+            setDuplicateWarning(duplicate)
+          }
+
+          // Detectar tipo de forma más inteligente
+          let detectedType = detectUISourceType(url)
+          
+          // Para URLs que parecen websites, verificar si realmente son RSS
+          if (detectedType === 'website' || detectedType === null) {
+            try {
+              const rssCheck = await isValidRssFeed(url)
+              if (rssCheck.isRss) {
+                detectedType = rssCheck.isPodcast ? 'podcast' : 'rss'
+                // Usar el título del feed si está disponible
+                if (rssCheck.title) {
+                  setFormData((prev) => ({ 
+                    ...prev, 
+                    name: rssCheck.title!,
+                    description: rssCheck.description || prev.description 
+                  }))
+                }
+              }
+            } catch (error) {
+              console.error('Error checking RSS:', error)
+            }
+          }
+          
           if (detectedType) {
             setSelectedType(detectedType)
             
@@ -293,6 +367,15 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
                 } else {
                   setRedirectWarning(null)
                 }
+                
+                // Re-verificar duplicado con el RSS feed resuelto
+                const rssFeedUrl = await getYoutubeRssFeedUrl(url)
+                if (rssFeedUrl) {
+                  const duplicateRss = checkDuplicate(rssFeedUrl, existingSources)
+                  if (duplicateRss) {
+                    setDuplicateWarning(duplicateRss)
+                  }
+                }
               } catch (error) {
                 console.error('Error detecting YouTube channel name:', error)
                 // Fallback al nombre extraído de la URL
@@ -303,11 +386,10 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
                 setDetectedFaviconUrl(null)
                 setRedirectWarning(null)
               }
-            } else {
-              // Para otros tipos, usar el nombre extraído de la URL
+            } else if (detectedType !== 'rss' && detectedType !== 'podcast') {
+              // Para otros tipos (no RSS/podcast que ya se manejaron arriba)
               const suggestedName = extractSourceName(url, detectedType)
-              if (suggestedName) {
-                // Siempre actualizar el nombre cuando cambia la URL
+              if (suggestedName && !formData.name) {
                 setFormData((prev) => ({ ...prev, name: suggestedName }))
               }
               setRedirectWarning(null)
@@ -323,10 +405,11 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
       setSelectedType(null)
       setDetectedFaviconUrl(null)
       setRedirectWarning(null)
+      setDuplicateWarning(null)
       // Limpiar el nombre cuando se borra la URL
       setFormData((prev) => ({ ...prev, name: "" }))
     }
-  }, [url])
+  }, [url, existingSources])
 
   const handleReset = () => {
     setUrl("")
@@ -334,6 +417,7 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
     setUrlValidation(null)
     setDetectedFaviconUrl(null)
     setRedirectWarning(null)
+    setDuplicateWarning(null)
     setFormData({
       name: "",
       description: "",
@@ -508,6 +592,23 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
           </div>
         )}
 
+        {/* Advertencia de fuente duplicada */}
+        {duplicateWarning && (
+          <div className="p-4 rounded-lg border-2 border-red-500/50 bg-red-500/10">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="h-5 w-5 shrink-0 mt-0.5 text-red-600" />
+              <div className="flex-1">
+                <h3 className="font-semibold mb-1 text-red-800 dark:text-red-200">
+                  Fuente duplicada
+                </h3>
+                <p className="text-sm text-red-700 dark:text-red-300">
+                  {duplicateWarning}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Advertencia de redirección de canal de YouTube */}
         {redirectWarning?.wasRedirected && (
           <div className="p-4 rounded-lg border-2 border-amber-500/50 bg-amber-500/10">
@@ -592,7 +693,8 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
               !url || 
               !urlValidation?.isValid || 
               isSubmitting || 
-              !canAddSource(userSourcesCount)
+              !canAddSource(userSourcesCount) ||
+              !!duplicateWarning
             }
           >
             {isSubmitting ? (

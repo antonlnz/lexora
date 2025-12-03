@@ -5,6 +5,7 @@ import { DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { useState, useEffect, useRef, useCallback } from "react"
 import { useSubscription } from "@/contexts/subscription-context"
+import { usePendingDeletions } from "@/contexts/pending-deletions-context"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -37,7 +38,6 @@ import {
   Upload,
   Download,
   Loader2,
-  Undo2,
   AlertTriangle,
   Bookmark,
 } from "lucide-react"
@@ -59,6 +59,7 @@ type Source = SourceWithUserData
 
 export function SourcesManager() {
   const { canAddSource, getSourceLimit, currentPlan, hasFeature } = useSubscription()
+  const { addPendingDeletion, registerSourceRestoredCallback } = usePendingDeletions()
   const [sources, setSources] = useState<Source[]>([])
   const [selectedSource, setSelectedSource] = useState<Source | null>(null)
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
@@ -74,25 +75,23 @@ export function SourcesManager() {
   const [showSavedContentDialog, setShowSavedContentDialog] = useState(false)
   const [showFinalDeleteConfirm, setShowFinalDeleteConfirm] = useState(false)
   const [deleteSavedContent, setDeleteSavedContent] = useState(false)
-  const [deletedSource, setDeletedSource] = useState<{ 
-    source: Source
-    deleteSaved: boolean
-    timeout: NodeJS.Timeout 
-  } | null>(null)
+
+  // Registrar callback para cuando se restaure una fuente
+  useEffect(() => {
+    const unregister = registerSourceRestoredCallback((source: Source) => {
+      setSources(prev => {
+        // Solo añadir si no existe ya
+        if (prev.some(s => s.id === source.id)) return prev
+        return [...prev, source]
+      })
+    })
+    return unregister
+  }, [registerSourceRestoredCallback])
 
   // Cargar fuentes al montar el componente
   useEffect(() => {
     loadSources()
   }, [])
-
-  // Limpiar timeout al desmontar
-  useEffect(() => {
-    return () => {
-      if (deletedSource?.timeout) {
-        clearTimeout(deletedSource.timeout)
-      }
-    }
-  }, [deletedSource])
 
   const loadSources = async () => {
     setIsLoading(true)
@@ -178,7 +177,7 @@ export function SourcesManager() {
     executeDelete(deleteConfirmSource, true)
   }
 
-  // Ejecutar la eliminación con undo de 5 segundos
+  // Ejecutar la eliminación con undo de 10 segundos (usando el contexto global)
   const executeDelete = async (source: Source, deleteSaved: boolean) => {
     // Limpiar estados de diálogos
     setDeleteConfirmSource(null)
@@ -191,40 +190,8 @@ export function SourcesManager() {
       setSelectedSource(null)
     }
 
-    // Configurar timeout de 5 segundos para eliminar permanentemente
-    const timeout = setTimeout(async () => {
-      console.log(`[executeDelete] Timeout completed, executing deleteSourceCompletely for ${source.id}`)
-      try {
-        await sourceService.deleteSourceCompletely(source.id, deleteSaved)
-        console.log(`[executeDelete] Successfully deleted source ${source.id}`)
-        setDeletedSource(null)
-      } catch (error) {
-        console.error(`[executeDelete] Error deleting source ${source.id}:`, error)
-        // Si falla, restaurar la fuente
-        setSources((prev) => [...prev, source])
-        toast.error("Error al eliminar fuente")
-        setDeletedSource(null)
-      }
-    }, 5000)
-
-    setDeletedSource({ source, deleteSaved, timeout })
-    toast.success(
-      deleteSaved 
-        ? "Fuente y contenido guardado eliminados" 
-        : "Fuente eliminada"
-    )
-  }
-
-  const handleUndoDelete = () => {
-    if (!deletedSource) return
-
-    // Cancelar el timeout
-    clearTimeout(deletedSource.timeout)
-
-    // Restaurar la fuente
-    setSources((prev) => [...prev, deletedSource.source])
-    setDeletedSource(null)
-    toast.success("Eliminación cancelada")
+    // Añadir a las eliminaciones pendientes (el contexto maneja el timeout y la UI)
+    addPendingDeletion(source, deleteSaved)
   }
 
   // Cancelar el flujo de eliminación
@@ -513,7 +480,7 @@ ${sources.map(source => {
                       Tienes {deletionInfo.savedContentCount} elemento(s) guardado(s) de esta fuente.
                     </span>
                   )}
-                  <span className="block mt-2">Esta acción se puede deshacer en los próximos 5 segundos.</span>
+                  <span className="block mt-2">Esta acción se puede deshacer en los próximos 10 segundos.</span>
                 </>
               )}
             </AlertDialogDescription>
@@ -526,7 +493,7 @@ ${sources.map(source => {
                 handleConfirmDelete()
               }}
               disabled={isLoadingDeletionInfo}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-destructive text-white hover:bg-red-600 hover:shadow-lg hover:shadow-destructive/25 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
             >
               {isLoadingDeletionInfo ? "Comprobando..." : "Eliminar"}
             </AlertDialogAction>
@@ -557,7 +524,7 @@ ${sources.map(source => {
                 e.preventDefault()
                 handleSavedContentChoice(false)
               }}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-destructive text-white hover:bg-red-600 hover:shadow-lg hover:shadow-destructive/25 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
             >
               Eliminar todo
             </AlertDialogAction>
@@ -572,7 +539,7 @@ ${sources.map(source => {
             <AlertDialogTitle>Confirmar eliminación completa</AlertDialogTitle>
             <AlertDialogDescription>
               Vas a eliminar permanentemente la fuente <strong>{deleteConfirmSource?.title}</strong> y todo su contenido guardado ({deletionInfo?.savedContentCount || 0} elemento(s)).
-              <span className="block mt-2 font-medium text-destructive">Esta acción se puede deshacer en los próximos 5 segundos.</span>
+              <span className="block mt-2 font-medium text-destructive">Esta acción se puede deshacer en los próximos 10 segundos.</span>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -582,106 +549,13 @@ ${sources.map(source => {
                 e.preventDefault()
                 handleFinalDeleteConfirm()
               }}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-destructive text-white hover:bg-red-600 hover:shadow-lg hover:shadow-destructive/25 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
             >
               Eliminar todo
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      {/* Botón de Undo con cuenta atrás circular */}
-      {deletedSource && (
-        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5">
-          <Card className="glass-card shadow-lg border-primary/20 p-4">
-            <div className="flex items-center gap-4">
-              <CircularCountdown seconds={5} />
-              <div className="flex-1">
-                <p className="text-sm font-medium">Fuente eliminada</p>
-                <p className="text-xs text-muted-foreground truncate max-w-[150px]">{deletedSource.source.title}</p>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleUndoDelete}
-                className="shrink-0 hover-lift-subtle"
-              >
-                <Undo2 className="h-4 w-4 mr-2" />
-                Deshacer
-              </Button>
-            </div>
-          </Card>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// Componente de cuenta atrás circular con animación CSS pura
-function CircularCountdown({ seconds }: { seconds: number }) {
-  const [timeLeft, setTimeLeft] = useState(seconds)
-  
-  // Solo actualizar el número cada segundo
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(interval)
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
-    
-    return () => clearInterval(interval)
-  }, [seconds])
-  
-  // SVG circle parameters
-  const size = 40
-  const strokeWidth = 3
-  const radius = (size - strokeWidth) / 2
-  const circumference = 2 * Math.PI * radius
-  
-  return (
-    <div className="relative" style={{ width: size, height: size }}>
-      <svg
-        width={size}
-        height={size}
-        className="transform -rotate-90"
-      >
-        {/* Background circle */}
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={strokeWidth}
-          className="text-muted/30"
-        />
-        {/* Progress circle - animación CSS smooth */}
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={strokeWidth}
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          className="text-primary"
-          style={{
-            strokeDashoffset: 0,
-            animation: `circularCountdown ${seconds}s linear forwards`,
-            // Variable CSS para la circunferencia
-            ['--circumference' as string]: circumference,
-          }}
-        />
-      </svg>
-      {/* Número del segundo */}
-      <div className="absolute inset-0 flex items-center justify-center">
-        <span className="text-sm font-semibold tabular-nums">{timeLeft}</span>
-      </div>
     </div>
   )
 }
@@ -793,7 +667,7 @@ function SourcesList({ sources, onToggle, onDelete, onSelect, selectedId, onUpda
                           e.stopPropagation()
                           onDelete(source)
                         }} 
-                        className="h-8 px-3 hover-lift-subtle text-destructive hover:text-destructive"
+                        className="h-8 px-3 text-destructive hover:text-destructive hover:bg-destructive/10 dark:hover:bg-destructive/20 transition-colors duration-150"
                       >
                         <Trash2 className="h-4 w-4 mr-2" />
                         Delete

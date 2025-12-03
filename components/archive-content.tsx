@@ -8,6 +8,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { GlassStatsCard } from "@/components/glass-components"
 import { ContentCard } from "@/components/content-card"
 import { ContentViewer } from "@/components/content-viewer"
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { 
   Search, 
   Bookmark, 
@@ -27,7 +29,8 @@ import {
   Check,
   X,
   Lock,
-  Crown
+  Crown,
+  Menu
 } from "lucide-react"
 import { contentService, type ContentWithMetadata } from "@/lib/services/content-service"
 import { folderService } from "@/lib/services/folder-service"
@@ -57,6 +60,7 @@ import {
 import { motion, AnimatePresence } from "framer-motion"
 import { useSubscription } from "@/contexts/subscription-context"
 import { toast } from "sonner"
+import { useIsMobile } from "@/hooks/use-mobile"
 
 // Colores disponibles para carpetas
 const FOLDER_COLORS = [
@@ -76,6 +80,7 @@ const FOLDER_COLORS = [
 
 export function ArchiveContent() {
   const { hasFeature, currentPlan } = useSubscription()
+  const isMobile = useIsMobile()
   const [searchQuery, setSearchQuery] = useState("")
   const [archivedContent, setArchivedContent] = useState<ContentWithMetadata[]>([])
   const [readContent, setReadContent] = useState<ContentWithMetadata[]>([])
@@ -86,6 +91,7 @@ export function ArchiveContent() {
     savedItems: 0,
     archived: 0
   })
+  const [mobileFolderSheetOpen, setMobileFolderSheetOpen] = useState(false)
 
   // Features del plan
   const canSearch = hasFeature('archive_search')
@@ -439,7 +445,7 @@ export function ArchiveContent() {
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
+                variant="destructive"
                 onClick={(e) => {
                   e.stopPropagation()
                   setDeletingFolder(folder)
@@ -461,9 +467,27 @@ export function ArchiveContent() {
   const unfiledCount = archivedContent.filter(c => !c.user_content?.folder_id).length
 
   return (
-    <div className="space-y-8">
-      {/* Stats Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+    <div className="space-y-6 md:space-y-8">
+      {/* Stats Overview - Scroll horizontal en mobile */}
+      <div className="md:hidden -mx-4 px-4">
+        <ScrollArea className="w-full">
+          <div className="flex gap-4 pb-2">
+            <div className="shrink-0 w-[160px]">
+              <GlassStatsCard title="Total Read" value={stats.totalRead.toString()} change="" trend="up" icon={Clock} />
+            </div>
+            <div className="shrink-0 w-[160px]">
+              <GlassStatsCard title="Saved Items" value={stats.savedItems.toString()} change="" trend="up" icon={Bookmark} />
+            </div>
+            <div className="shrink-0 w-[160px]">
+              <GlassStatsCard title="Archived" value={stats.archived.toString()} change="" trend="up" icon={Archive} />
+            </div>
+          </div>
+          <ScrollBar orientation="horizontal" className="h-1.5" />
+        </ScrollArea>
+      </div>
+      
+      {/* Stats Overview - Grid en desktop */}
+      <div className="hidden md:grid md:grid-cols-3 gap-6">
         <GlassStatsCard title="Total Read" value={stats.totalRead.toString()} change="" trend="up" icon={Clock} />
         <GlassStatsCard title="Saved Items" value={stats.savedItems.toString()} change="" trend="up" icon={Bookmark} />
         <GlassStatsCard title="Archived" value={stats.archived.toString()} change="" trend="up" icon={Archive} />
@@ -528,9 +552,281 @@ export function ArchiveContent() {
           </TabsList>
 
           <TabsContent value="saved" className="mt-6">
+            {/* Mobile: Carpetas como chips horizontales + botón sheet */}
+            <div className="md:hidden mb-4 space-y-3">
+              {/* Botón para abrir sheet de carpetas + crear carpeta */}
+              <div className="flex items-center gap-2">
+                <Sheet open={mobileFolderSheetOpen} onOpenChange={setMobileFolderSheetOpen}>
+                  <SheetTrigger asChild>
+                    <Button variant="outline" size="sm" className="glass bg-transparent">
+                      <Menu className="h-4 w-4 mr-2" />
+                      Carpetas
+                    </Button>
+                  </SheetTrigger>
+                  <SheetContent side="bottom" className="h-[70vh] rounded-t-2xl px-6" onOpenChange={setMobileFolderSheetOpen}>
+                    <SheetHeader className="pb-4 pr-8">
+                      <div className="flex items-center justify-between">
+                        <SheetTitle>Carpetas</SheetTitle>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-1.5"
+                          onClick={() => setIsCreatingFolder(true)}
+                        >
+                          <FolderPlus className="h-4 w-4" />
+                          <span>Nueva</span>
+                        </Button>
+                      </div>
+                    </SheetHeader>
+                    
+                    {/* Crear carpeta en sheet */}
+                    <AnimatePresence>
+                      {(isCreatingFolder || editingFolder) && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="mb-4 space-y-3"
+                        >
+                          <Input
+                            placeholder="Nombre de la carpeta"
+                            value={newFolderName}
+                            onChange={(e) => setNewFolderName(e.target.value)}
+                            className="h-10"
+                            autoFocus
+                          />
+                          <div className="flex flex-wrap gap-2">
+                            {FOLDER_COLORS.map((color) => (
+                              <button
+                                key={color}
+                                className={cn(
+                                  "w-7 h-7 rounded-full transition-transform",
+                                  newFolderColor === color && "ring-2 ring-offset-2 ring-offset-background ring-primary scale-110"
+                                )}
+                                style={{ backgroundColor: color }}
+                                onClick={() => setNewFolderColor(color)}
+                              />
+                            ))}
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              className="flex-1"
+                              onClick={() => {
+                                editingFolder ? handleUpdateFolder() : handleCreateFolder()
+                                setMobileFolderSheetOpen(false)
+                              }}
+                              disabled={!newFolderName.trim() || creatingFolder}
+                            >
+                              {creatingFolder ? (
+                                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                              ) : (
+                                <Check className="h-4 w-4 mr-2" />
+                              )}
+                              {editingFolder ? "Guardar" : "Crear"}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setIsCreatingFolder(false)
+                                setEditingFolder(null)
+                                setNewFolderName("")
+                              }}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    <ScrollArea className="h-[calc(100%-100px)]">
+                      <div className="space-y-1">
+                        {/* Sin carpeta */}
+                        <div
+                          className={cn(
+                            "flex items-center gap-3 px-3 py-3 rounded-xl cursor-pointer transition-all",
+                            "hover:bg-accent/50 active:scale-[0.98]",
+                            selectedFolderId === null && "bg-accent text-accent-foreground"
+                          )}
+                          onClick={() => {
+                            setSelectedFolderId(null)
+                            setMobileFolderSheetOpen(false)
+                          }}
+                        >
+                          <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-muted shrink-0">
+                            <Inbox className="w-5 h-5 text-muted-foreground" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <span className="font-medium">Sin carpeta</span>
+                            <p className="text-xs text-muted-foreground">{unfiledCount} elementos</p>
+                          </div>
+                          {selectedFolderId === null && (
+                            <Check className="h-4 w-4 text-primary shrink-0" />
+                          )}
+                        </div>
+
+                        {folders.length > 0 && (
+                          <div className="h-px bg-border my-3" />
+                        )}
+
+                        {loadingFolders ? (
+                          <div className="flex items-center justify-center py-8">
+                            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                          </div>
+                        ) : (
+                          folders.map(folder => {
+                            const contentCount = countFolderContent(folder)
+                            const isSelected = selectedFolderId === folder.id
+                            return (
+                              <div
+                                key={folder.id}
+                                className={cn(
+                                  "flex items-center gap-3 px-3 py-3 rounded-xl cursor-pointer transition-all",
+                                  "hover:bg-accent/50 active:scale-[0.98]",
+                                  isSelected && "bg-accent text-accent-foreground"
+                                )}
+                                onClick={() => {
+                                  setSelectedFolderId(folder.id)
+                                  setMobileFolderSheetOpen(false)
+                                }}
+                              >
+                                <div
+                                  className="flex items-center justify-center w-10 h-10 rounded-xl shrink-0"
+                                  style={{ backgroundColor: (folder.color || FOLDER_COLORS[0]) + '20' }}
+                                >
+                                  {isSelected ? (
+                                    <FolderOpen className="w-5 h-5" style={{ color: folder.color || FOLDER_COLORS[0] }} />
+                                  ) : (
+                                    <Folder className="w-5 h-5" style={{ color: folder.color || FOLDER_COLORS[0] }} />
+                                  )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <span className="font-medium truncate block">{folder.name}</span>
+                                  <p className="text-xs text-muted-foreground">{contentCount} elementos</p>
+                                </div>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 shrink-0"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <MoreHorizontal className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setNewFolderName(folder.name)
+                                        setNewFolderColor(folder.color || FOLDER_COLORS[0])
+                                        setEditingFolder(folder)
+                                      }}
+                                    >
+                                      <Pencil className="w-4 h-4 mr-2" />
+                                      Editar
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      variant="destructive"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setDeletingFolder(folder)
+                                        setMobileFolderSheetOpen(false)
+                                      }}
+                                    >
+                                      <Trash2 className="w-4 h-4 mr-2" />
+                                      Eliminar
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
+                            )
+                          })
+                        )}
+                      </div>
+                    </ScrollArea>
+                  </SheetContent>
+                </Sheet>
+
+                {/* Chip de carpeta seleccionada */}
+                <div className="flex-1 min-w-0">
+                  {selectedFolderId ? (
+                    <div 
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium"
+                      style={{ 
+                        backgroundColor: (folders.find(f => f.id === selectedFolderId)?.color || FOLDER_COLORS[0]) + '20',
+                        color: folders.find(f => f.id === selectedFolderId)?.color || FOLDER_COLORS[0]
+                      }}
+                    >
+                      <Folder className="h-3.5 w-3.5" />
+                      <span className="truncate max-w-[150px]">
+                        {folders.find(f => f.id === selectedFolderId)?.name}
+                      </span>
+                      <button 
+                        onClick={() => setSelectedFolderId(null)}
+                        className="hover:bg-black/10 rounded-full p-0.5"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-sm font-medium text-muted-foreground">
+                      <Inbox className="h-3.5 w-3.5" />
+                      <span>Sin carpeta</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Chips de carpetas horizontales (quick access) */}
+              {folders.length > 0 && (
+                <ScrollArea className="w-full whitespace-nowrap">
+                  <div className="flex gap-2 pb-2">
+                    {folders.slice(0, 6).map(folder => (
+                      <button
+                        key={folder.id}
+                        onClick={() => setSelectedFolderId(folder.id)}
+                        className={cn(
+                          "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all shrink-0",
+                          "border",
+                          selectedFolderId === folder.id 
+                            ? "border-transparent" 
+                            : "border-border/50 bg-background/50 hover:bg-accent/50"
+                        )}
+                        style={selectedFolderId === folder.id ? { 
+                          backgroundColor: (folder.color || FOLDER_COLORS[0]) + '20',
+                          color: folder.color || FOLDER_COLORS[0]
+                        } : {}}
+                      >
+                        <Folder className="h-3 w-3" style={{ color: folder.color || FOLDER_COLORS[0] }} />
+                        <span className="truncate max-w-[80px]">{folder.name}</span>
+                        <span className="text-[10px] opacity-60">
+                          {countFolderContent(folder)}
+                        </span>
+                      </button>
+                    ))}
+                    {folders.length > 6 && (
+                      <button
+                        onClick={() => setMobileFolderSheetOpen(true)}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium border border-border/50 bg-background/50 hover:bg-accent/50 shrink-0"
+                      >
+                        +{folders.length - 6} más
+                      </button>
+                    )}
+                  </div>
+                  <ScrollBar orientation="horizontal" className="h-1.5" />
+                </ScrollArea>
+              )}
+            </div>
+
+            {/* Desktop: Layout original con sidebar */}
             <div className="flex gap-6">
-              {/* Sidebar de carpetas */}
-              <div className="w-64 shrink-0">
+              {/* Sidebar de carpetas - Solo desktop */}
+              <div className="w-64 shrink-0 hidden md:block">
                 <Card className="glass-card p-4 sticky top-4">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="font-semibold text-sm">Carpetas</h3>
@@ -654,7 +950,7 @@ export function ArchiveContent() {
                     <p className="text-muted-foreground">Loading content...</p>
                   </Card>
                 ) : filteredFolderContent.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                     {filteredFolderContent.map((item) => (
                       <ContentCard
                         key={`${item.content_type}-${item.id}`}
@@ -746,7 +1042,7 @@ export function ArchiveContent() {
             <Button
               variant="destructive"
               onClick={() => handleDeleteFolder(true)}
-              className="flex-1 bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="flex-1"
             >
               Eliminar todo
             </Button>

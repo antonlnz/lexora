@@ -6,6 +6,7 @@ import { Suspense } from "react"
 import { AuthProvider } from "@/contexts/auth-context"
 import { SubscriptionProvider } from "@/contexts/subscription-context"
 import { InterfaceSettingsProvider } from "@/contexts/interface-settings-context"
+import { PendingDeletionsProvider } from "@/contexts/pending-deletions-context"
 import { SessionSyncProvider } from "@/components/session-sync-provider"
 import { ThemeProvider } from "@/components/theme-provider"
 import "./globals.css"
@@ -60,9 +61,11 @@ export default function RootLayout({
           <AuthProvider>
             <SubscriptionProvider>
               <InterfaceSettingsProvider>
-                <SessionSyncProvider>
-                  <Suspense fallback={null}>{children}</Suspense>
-                </SessionSyncProvider>
+                <PendingDeletionsProvider>
+                  <SessionSyncProvider>
+                    <Suspense fallback={null}>{children}</Suspense>
+                  </SessionSyncProvider>
+                </PendingDeletionsProvider>
               </InterfaceSettingsProvider>
             </SubscriptionProvider>
           </AuthProvider>

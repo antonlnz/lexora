@@ -834,7 +834,7 @@ export function SettingsContent({
                     <Button
                       variant="outline"
                       onClick={() => setShowCancelDialog(true)}
-                      className="w-full glass hover-lift-subtle bg-transparent text-destructive hover:text-destructive"
+                      className="w-full glass bg-transparent text-destructive hover:text-destructive hover:bg-destructive/10 hover:border-destructive/50 transition-colors duration-150"
                     >
                       Cancel Subscription
                     </Button>
@@ -959,7 +959,7 @@ export function SettingsContent({
             <Button
               variant="outline"
               onClick={logout}
-              className="w-full glass hover-lift-subtle bg-transparent text-destructive hover:text-destructive"
+              className="w-full glass bg-transparent text-destructive hover:text-destructive hover:bg-destructive/10 hover:border-destructive/50 transition-colors duration-150"
             >
               <LogOut className="h-4 w-4 mr-2" />
               Sign Out
@@ -1057,7 +1057,7 @@ export function SettingsContent({
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={handleProceedToPassword}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 hover-lift-subtle"
+              className="bg-destructive text-white hover:bg-red-600 hover:shadow-lg hover:shadow-destructive/25 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
             >
               Continuar
             </AlertDialogAction>

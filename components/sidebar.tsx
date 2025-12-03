@@ -328,29 +328,6 @@ export function Sidebar({ onClose }: SidebarProps) {
                 ))}
               </div>
             </div>
-
-            {/* Stats */}
-            <div className="glass-card p-6 rounded-2xl hover-lift">
-              <h3 className="text-lg font-semibold mb-4 text-balance">Today's Summary</h3>
-              <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">New items</span>
-                  <span className="font-semibold text-primary">113</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Read</span>
-                  <span className="font-semibold">24</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Saved</span>
-                  <span className="font-semibold">8</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Reading time</span>
-                  <span className="font-semibold">2h 15m</span>
-                </div>
-              </div>
-            </div>
           </>
         )}
       </div>

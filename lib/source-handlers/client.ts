@@ -365,6 +365,46 @@ export function isValidUrl(url: string): boolean {
 }
 
 /**
+ * Verifica si una URL es un feed RSS/Atom válido haciendo una petición al servidor
+ * Esto es útil para URLs que no tienen patrones obvios como .xml o /feed/
+ * 
+ * @param url - URL a verificar
+ * @returns Objeto con isRss, isPodcast (si contiene elementos de audio), title y description
+ */
+export async function isValidRssFeed(url: string): Promise<{
+  isRss: boolean
+  isPodcast: boolean
+  title?: string
+  description?: string
+}> {
+  try {
+    // Usar un endpoint del servidor para verificar el feed
+    const response = await fetch('/api/feeds/validate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url }),
+    })
+
+    if (!response.ok) {
+      return { isRss: false, isPodcast: false }
+    }
+
+    const data = await response.json()
+    return {
+      isRss: data.isRss ?? false,
+      isPodcast: data.isPodcast ?? false,
+      title: data.title,
+      description: data.description,
+    }
+  } catch (error) {
+    console.error('Error validating RSS feed:', error)
+    return { isRss: false, isPodcast: false }
+  }
+}
+
+/**
  * Obtiene la URL del favicon usando Google Favicon Service
  */
 export function getFaviconUrl(url: string): string | null {

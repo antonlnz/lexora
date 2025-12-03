@@ -3,6 +3,7 @@
 import * as React from 'react'
 import * as SheetPrimitive from '@radix-ui/react-dialog'
 import { XIcon } from 'lucide-react'
+import { motion, useAnimation, useDragControls, PanInfo } from 'framer-motion'
 
 import { cn } from '@/lib/utils'
 
@@ -44,38 +45,98 @@ function SheetOverlay({
   )
 }
 
+interface SheetContentProps extends React.ComponentProps<typeof SheetPrimitive.Content> {
+  side?: 'top' | 'right' | 'bottom' | 'left'
+  onOpenChange?: (open: boolean) => void
+}
+
 function SheetContent({
   className,
   children,
   side = 'right',
+  onOpenChange,
   ...props
-}: React.ComponentProps<typeof SheetPrimitive.Content> & {
-  side?: 'top' | 'right' | 'bottom' | 'left'
-}) {
+}: SheetContentProps) {
+  const controls = useAnimation()
+  const dragControls = useDragControls()
+  const [isDragging, setIsDragging] = React.useState(false)
+
+  const handleDragEnd = async (_: any, info: PanInfo) => {
+    setIsDragging(false)
+    const threshold = 100
+    const velocity = info.velocity.y
+    const offset = info.offset.y
+
+    // Si se arrastra hacia abajo lo suficiente o con suficiente velocidad
+    if ((side === 'bottom' && (offset > threshold || velocity > 500)) ||
+        (side === 'top' && (offset < -threshold || velocity < -500))) {
+      // Cerrar el sheet
+      if (onOpenChange) {
+        onOpenChange(false)
+      }
+    } else {
+      // Volver a la posición original
+      await controls.start({ y: 0 })
+    }
+  }
+
+  const isBottomSheet = side === 'bottom'
+
   return (
     <SheetPortal>
       <SheetOverlay />
       <SheetPrimitive.Content
         data-slot="sheet-content"
         className={cn(
-          'bg-background data-[state=open]:animate-in data-[state=closed]:animate-out fixed z-50 flex flex-col gap-4 shadow-lg transition ease-in-out data-[state=closed]:duration-300 data-[state=open]:duration-500',
+          'bg-background fixed z-50 flex flex-col shadow-lg',
           side === 'right' &&
-            'data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right inset-y-0 right-0 h-full w-3/4 border-l sm:max-w-sm',
+            'data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:duration-500 transition ease-in-out inset-y-0 right-0 h-full w-3/4 border-l sm:max-w-sm',
           side === 'left' &&
-            'data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left inset-y-0 left-0 h-full w-3/4 border-r sm:max-w-sm',
+            'data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:duration-500 transition ease-in-out inset-y-0 left-0 h-full w-3/4 border-r sm:max-w-sm',
           side === 'top' &&
-            'data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top inset-x-0 top-0 h-auto border-b',
-          side === 'bottom' &&
-            'data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom inset-x-0 bottom-0 h-auto border-t',
+            'data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:duration-500 transition ease-in-out inset-x-0 top-0 h-auto border-b',
+          !isBottomSheet && 'gap-4',
+          isBottomSheet && 'inset-x-0 bottom-0 h-auto border-t',
           className,
         )}
+        asChild={isBottomSheet}
         {...props}
       >
-        {children}
-        <SheetPrimitive.Close className="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none">
-          <XIcon className="size-4" />
-          <span className="sr-only">Close</span>
-        </SheetPrimitive.Close>
+        {isBottomSheet ? (
+          <motion.div
+            drag="y"
+            dragControls={dragControls}
+            dragConstraints={{ top: 0, bottom: 0 }}
+            dragElastic={{ top: 0, bottom: 0.5 }}
+            onDragStart={() => setIsDragging(true)}
+            onDragEnd={handleDragEnd}
+            animate={controls}
+            initial={{ y: 0 }}
+            style={{ touchAction: 'none' }}
+            className="flex flex-col"
+          >
+            {/* Handle para arrastrar */}
+            <div 
+              className="flex justify-center pt-3 pb-2 cursor-grab active:cursor-grabbing"
+              onPointerDown={(e) => dragControls.start(e)}
+            >
+              <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
+            </div>
+            {children}
+            <SheetPrimitive.Close className="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none">
+              <XIcon className="size-4" />
+              <span className="sr-only">Close</span>
+            </SheetPrimitive.Close>
+          </motion.div>
+        ) : (
+          <>
+            {children}
+            <SheetPrimitive.Close className="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none">
+              <XIcon className="size-4" />
+              <span className="sr-only">Close</span>
+            </SheetPrimitive.Close>
+          </>
+        )}
       </SheetPrimitive.Content>
     </SheetPortal>
   )
