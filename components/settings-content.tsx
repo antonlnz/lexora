@@ -210,7 +210,7 @@ export function SettingsContent({
   }
 
   return (
-    <Tabs value={initialSection} onValueChange={handleTabChange} className="w-full">
+    <Tabs value={initialSection} onValueChange={handleTabChange} className="w-full pb-24 md:pb-0">
       <TabsList className="glass-card w-full justify-start overflow-x-auto mb-6">
         <TabsTrigger value="appearance" className="hover-lift-subtle">
           <Palette className="h-4 w-4 mr-2" />

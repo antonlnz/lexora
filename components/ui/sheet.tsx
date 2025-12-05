@@ -60,6 +60,7 @@ function SheetContent({
   const controls = useAnimation()
   const dragControls = useDragControls()
   const [isDragging, setIsDragging] = React.useState(false)
+  const [isClosing, setIsClosing] = React.useState(false)
 
   const handleDragEnd = async (_: any, info: PanInfo) => {
     setIsDragging(false)
@@ -70,13 +71,36 @@ function SheetContent({
     // Si se arrastra hacia abajo lo suficiente o con suficiente velocidad
     if ((side === 'bottom' && (offset > threshold || velocity > 500)) ||
         (side === 'top' && (offset < -threshold || velocity < -500))) {
-      // Cerrar el sheet
+      // Animar hacia abajo antes de cerrar
+      setIsClosing(true)
+      await controls.start({ 
+        y: '100%', 
+        transition: { duration: 0.3, ease: [0.32, 0.72, 0, 1] } 
+      })
       if (onOpenChange) {
         onOpenChange(false)
       }
+      setIsClosing(false)
     } else {
       // Volver a la posición original
-      await controls.start({ y: 0 })
+      await controls.start({ y: 0, transition: { duration: 0.2 } })
+    }
+  }
+  
+  // Manejar cierre programático con animación
+  const handleClose = async () => {
+    if (side === 'bottom') {
+      setIsClosing(true)
+      await controls.start({ 
+        y: '100%', 
+        transition: { duration: 0.3, ease: [0.32, 0.72, 0, 1] } 
+      })
+      if (onOpenChange) {
+        onOpenChange(false)
+      }
+      setIsClosing(false)
+    } else if (onOpenChange) {
+      onOpenChange(false)
     }
   }
 
@@ -96,10 +120,14 @@ function SheetContent({
           side === 'top' &&
             'data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:duration-500 transition ease-in-out inset-x-0 top-0 h-auto border-b',
           !isBottomSheet && 'gap-4',
-          isBottomSheet && 'inset-x-0 bottom-0 h-auto border-t pb-[env(safe-area-inset-bottom)]',
+          isBottomSheet && 'inset-x-0 bottom-0 border-t',
           className,
         )}
         asChild={isBottomSheet}
+        onPointerDownOutside={(e) => {
+          // Prevenir cierre durante animación
+          if (isClosing) e.preventDefault()
+        }}
         {...props}
       >
         {isBottomSheet ? (
@@ -112,18 +140,24 @@ function SheetContent({
             onDragEnd={handleDragEnd}
             animate={controls}
             initial={{ y: 0 }}
-            style={{ touchAction: 'none' }}
-            className="flex flex-col"
+            style={{ touchAction: isDragging ? 'none' : 'pan-y' }}
+            className="flex flex-col pb-[env(safe-area-inset-bottom)]"
           >
             {/* Handle para arrastrar */}
             <div 
-              className="flex justify-center pt-3 pb-2 cursor-grab active:cursor-grabbing"
+              className="flex justify-center pt-3 pb-2 cursor-grab active:cursor-grabbing shrink-0"
               onPointerDown={(e) => dragControls.start(e)}
             >
-              <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
+              <div className="w-10 h-1.5 rounded-full bg-muted-foreground/40" />
             </div>
             {children}
-            <SheetPrimitive.Close className="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none">
+            <SheetPrimitive.Close 
+              className="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none"
+              onClick={(e) => {
+                e.preventDefault()
+                handleClose()
+              }}
+            >
               <XIcon className="size-4" />
               <span className="sr-only">Close</span>
             </SheetPrimitive.Close>

@@ -39,7 +39,6 @@ import {
   Download,
   Loader2,
   AlertTriangle,
-  Bookmark,
 } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
@@ -47,7 +46,6 @@ import { sourceService, type SourceWithUserData, type SourceDeletionInfo } from 
 import { 
   SOURCE_TYPE_ICONS,
   SOURCE_TYPE_LABELS,
-  SOURCE_TYPE_COLORS,
   getSourceTypeIcon,
   getSourceTypeLabel,
   getSourceTypeColor,
@@ -177,7 +175,7 @@ export function SourcesManager() {
     executeDelete(deleteConfirmSource, true)
   }
 
-  // Ejecutar la eliminación con undo de 10 segundos (usando el contexto global)
+  // Ejecutar la eliminación con undo de 5 segundos (usando el contexto global)
   const executeDelete = async (source: Source, deleteSaved: boolean) => {
     // Limpiar estados de diálogos
     setDeleteConfirmSource(null)
@@ -295,7 +293,7 @@ ${sources.map(source => {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-24 md:pb-0">
       <div className={`glass-card p-4 rounded-lg ${isNearLimit ? "border-amber-500/50" : ""}`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -480,7 +478,7 @@ ${sources.map(source => {
                       Tienes {deletionInfo.savedContentCount} elemento(s) guardado(s) de esta fuente.
                     </span>
                   )}
-                  <span className="block mt-2">Esta acción se puede deshacer en los próximos 10 segundos.</span>
+                  <span className="block mt-2">Esta acción se puede deshacer en los próximos 5 segundos.</span>
                 </>
               )}
             </AlertDialogDescription>
@@ -539,7 +537,7 @@ ${sources.map(source => {
             <AlertDialogTitle>Confirmar eliminación completa</AlertDialogTitle>
             <AlertDialogDescription>
               Vas a eliminar permanentemente la fuente <strong>{deleteConfirmSource?.title}</strong> y todo su contenido guardado ({deletionInfo?.savedContentCount || 0} elemento(s)).
-              <span className="block mt-2 font-medium text-destructive">Esta acción se puede deshacer en los próximos 10 segundos.</span>
+              <span className="block mt-2 font-medium text-destructive">Esta acción se puede deshacer en los próximos 5 segundos.</span>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

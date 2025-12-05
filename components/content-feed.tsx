@@ -105,6 +105,8 @@ export function ContentFeed() {
   const isOpeningFromUrl = useRef(false)
   // Ref para rastrear si ya procesamos la URL inicial
   const hasProcessedInitialUrl = useRef(false)
+  // Ref para rastrear si estamos en proceso de abrir el viewer manualmente
+  const isOpeningManually = useRef(false)
 
   // Hook del podcast player para detectar cuando se quiere maximizar
   const { shouldOpenViewer, clearShouldOpenViewer, currentEpisode } = usePodcastPlayer()
@@ -227,32 +229,6 @@ export function ContentFeed() {
     } finally {
       setIsSyncing(false)
       setSyncProgress({ current: 0, total: 0 })
-    }
-  }
-
-  const syncFeeds = async () => {
-    try {
-      setIsSyncing(true)
-      const response = await fetch('/api/feeds/refresh', {
-        method: 'POST',
-      })
-      
-      if (!response.ok) {
-        // Solo loguear si no es un 404 o similar
-        if (response.status >= 500) {
-          console.error('Server error syncing feeds:', response.status)
-        }
-        return
-      }
-      
-      const data = await response.json()
-      if (data.totalArticlesAdded > 0) {
-        // console.log(`Synced ${data.totalArticlesAdded} new articles`)
-      }
-    } catch (error) {
-      // Silently fail - user might not have sources yet
-    } finally {
-      setIsSyncing(false)
     }
   }
 
@@ -393,19 +369,26 @@ export function ContentFeed() {
   })
 
   // Helper para determinar si un contenido debe usar PodcastViewer
+  // Solo los podcasts de audio usan PodcastViewer, YouTube normal usa ContentViewer
   const shouldUsePodcastViewer = (content: ContentWithMetadata): boolean => {
     const sourceType = content.source.source_type
-    return sourceType === 'podcast' || sourceType === 'youtube_channel' || sourceType === 'youtube_video'
+    return sourceType === 'podcast'
   }
 
   // Helper para abrir el visor correcto según el tipo de contenido
   const openCorrectViewer = useCallback((content: ContentWithMetadata) => {
     // Actualizar URL solo si no estamos abriendo desde URL
     if (!isOpeningFromUrl.current) {
+      // Marcar que estamos abriendo manualmente para evitar que el efecto de cierre interfiera
+      isOpeningManually.current = true
       const slug = generateContentSlug(content.id, content.title)
       const params = new URLSearchParams(searchParams.toString())
       params.set('viewer', slug)
       router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+      // Desmarcar después de un breve delay para dar tiempo a que la URL se actualice
+      setTimeout(() => {
+        isOpeningManually.current = false
+      }, 100)
     }
     
     if (shouldUsePodcastViewer(content)) {
@@ -505,26 +488,52 @@ export function ContentFeed() {
     // No limpiar el episodio inmediatamente para permitir mini player
   }
 
-  // Efecto para abrir visor desde URL al cargar contenido
+  // Ref para rastrear el último viewer procesado
+  const lastProcessedViewer = useRef<string | null>(null)
+
+  // Efecto para abrir visor desde URL al cargar contenido o cuando cambia el parámetro viewer
   useEffect(() => {
-    // Solo procesar si tenemos artículos y no hemos procesado ya la URL inicial
-    if (articles.length === 0 || hasProcessedInitialUrl.current) return
-    
     const viewerParam = searchParams.get('viewer')
+    
+    // Si no hay parámetro viewer, resetear y salir
     if (!viewerParam) {
+      lastProcessedViewer.current = null
       hasProcessedInitialUrl.current = true
       return
     }
     
+    // Si ya procesamos este mismo viewer, no hacer nada
+    if (viewerParam === lastProcessedViewer.current) return
+    
+    // Necesitamos artículos para la carga inicial, pero permitimos navegación desde búsqueda
     const contentId = parseContentSlug(viewerParam)
     if (!contentId) {
       hasProcessedInitialUrl.current = true
       return
     }
     
-    // Buscar el contenido por ID
-    const content = articles.find(a => a.id === contentId)
+    // Buscar el contenido por ID en los artículos cargados
+    let content = articles.find(a => a.id === contentId)
+    
+    // Si no encontramos el contenido pero es una navegación desde búsqueda (no carga inicial)
+    // intentar buscar el contenido directamente
+    if (!content && hasProcessedInitialUrl.current) {
+      // Buscar el contenido de forma asíncrona
+      contentService.getContentById(contentId).then(fetchedContent => {
+        if (fetchedContent) {
+          lastProcessedViewer.current = viewerParam
+          isOpeningFromUrl.current = true
+          openCorrectViewer(fetchedContent)
+          isOpeningFromUrl.current = false
+        }
+      }).catch(err => {
+        console.error('Error fetching content for viewer:', err)
+      })
+      return
+    }
+    
     if (content) {
+      lastProcessedViewer.current = viewerParam
       // Marcar que estamos abriendo desde URL para evitar actualizar la URL de nuevo
       isOpeningFromUrl.current = true
       openCorrectViewer(content)
@@ -537,6 +546,9 @@ export function ContentFeed() {
   // Efecto para cerrar visor cuando el parámetro viewer desaparece de la URL (navegación hacia atrás)
   useEffect(() => {
     const viewerParam = searchParams.get('viewer')
+    
+    // No cerrar si estamos en proceso de abrir manualmente (la URL aún no se ha actualizado)
+    if (isOpeningManually.current) return
     
     // Si no hay parámetro viewer y algún visor está abierto, cerrarlo
     if (!viewerParam && (isViewerOpen || isPodcastViewerOpen)) {
@@ -577,6 +589,52 @@ export function ContentFeed() {
     }
   }
 
+  // Función auxiliar para normalizar texto (eliminar acentos)
+  const normalizeText = (text: string): string => {
+    return text
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+  }
+
+  // Función de búsqueda fuzzy local
+  const fuzzyMatch = (text: string, searchTerm: string): boolean => {
+    const normalizedText = normalizeText(text)
+    const normalizedSearch = normalizeText(searchTerm)
+    
+    // Coincidencia exacta normalizada
+    if (normalizedText.includes(normalizedSearch)) return true
+    
+    // Buscar coincidencia de palabras individuales
+    const searchWords = normalizedSearch.split(/\s+/).filter(w => w.length > 1)
+    const textWords = normalizedText.split(/\s+/)
+    
+    for (const searchWord of searchWords) {
+      let found = false
+      for (const textWord of textWords) {
+        if (textWord.includes(searchWord) || searchWord.includes(textWord)) {
+          found = true
+          break
+        }
+        // Tolerancia a errores tipográficos (similitud básica)
+        if (searchWord.length > 3 && textWord.length > 3) {
+          let matches = 0
+          const minLen = Math.min(searchWord.length, textWord.length)
+          for (let i = 0; i < minLen; i++) {
+            if (searchWord[i] === textWord[i]) matches++
+          }
+          if (matches / minLen >= 0.7) {
+            found = true
+            break
+          }
+        }
+      }
+      if (found) return true
+    }
+    
+    return false
+  }
+
   const filteredAndSortedContent = useMemo(() => {
     const filtered = articles.filter((article) => {
       // Excluir contenido de fuentes pendientes de eliminación
@@ -585,16 +643,16 @@ export function ContentFeed() {
       }
       
       if (filters.search) {
-        const searchTerm = filters.search.toLowerCase()
         // Acceso seguro a propiedades que pueden no existir en todos los tipos de contenido
         const excerpt = 'excerpt' in article ? (article.excerpt || '') : ('description' in article ? (article.description || '') : '')
         const author = 'author' in article ? (article.author || '') : ('channel_name' in article ? (article.channel_name || '') : '')
         
+        // Usar búsqueda fuzzy
         if (
-          !article.title.toLowerCase().includes(searchTerm) &&
-          !excerpt.toLowerCase().includes(searchTerm) &&
-          !author.toLowerCase().includes(searchTerm) &&
-          !article.source.title.toLowerCase().includes(searchTerm)
+          !fuzzyMatch(article.title, filters.search) &&
+          !fuzzyMatch(excerpt, filters.search) &&
+          !fuzzyMatch(author, filters.search) &&
+          !fuzzyMatch(article.source.title, filters.search)
         ) {
           return false
         }
@@ -715,7 +773,7 @@ export function ContentFeed() {
   const showContent = true
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-24 md:pb-0">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-playfair font-bold text-balance">Your Content Universe</h1>

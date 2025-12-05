@@ -1156,8 +1156,13 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
   if (isMobile) {
     return (
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent side="bottom" className="h-[90vh] overflow-y-auto bg-white dark:bg-gray-950 p-0 rounded-t-2xl">
-          <div className="sticky top-0 bg-white dark:bg-gray-950 border-b z-10 px-6 py-4 mt-2">
+        <SheetContent 
+          side="bottom" 
+          className="max-h-[85vh] bg-white dark:bg-gray-950 p-0 rounded-t-3xl flex flex-col"
+          onOpenChange={onOpenChange}
+        >
+          {/* Handle visual ya incluido en SheetContent */}
+          <div className="sticky top-0 bg-white dark:bg-gray-950 border-b z-10 px-6 pt-2 pb-4">
             <SheetHeader>
               <SheetTitle className="text-2xl font-playfair">Add New Source</SheetTitle>
               <SheetDescription>
@@ -1165,7 +1170,7 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
               </SheetDescription>
             </SheetHeader>
           </div>
-          <div className="px-6 py-6">
+          <div className="flex-1 overflow-y-auto overscroll-contain px-6 py-4 pb-8">
             {formContent}
           </div>
         </SheetContent>

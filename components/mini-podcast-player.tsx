@@ -14,7 +14,6 @@ import {
   X,
   Maximize2,
 } from "lucide-react"
-import { useIsMobile } from "@/hooks/use-mobile"
 import { getBackgroundYouTubePlayer } from "./youtube-background-player"
 
 export function MiniPodcastPlayer() {
@@ -35,8 +34,6 @@ export function MiniPodcastPlayer() {
     close,
     updateFromYouTube,
   } = usePodcastPlayer()
-
-  const isMobile = useIsMobile()
 
   // Solo mostrar si hay episodio y está minimizado
   if (!isVisible || !isMinimized || !currentEpisode) {
@@ -121,17 +118,7 @@ export function MiniPodcastPlayer() {
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 100, scale: 0.9 }}
         transition={{ type: "spring", damping: 25, stiffness: 300 }}
-        className={`fixed z-50 ${
-          isMobile 
-            ? 'left-4 right-4' 
-            : 'bottom-6 left-1/2 -translate-x-1/2 max-w-md w-full mx-auto'
-        }`}
-        style={isMobile ? { 
-          // Usar env(safe-area-inset-bottom) para adaptarse a la barra de Safari
-          // Cuando la barra está expandida, safe-area es mayor; cuando se minimiza, es menor
-          // Añadimos un pequeño margen base de 12px
-          bottom: 'calc(12px + env(safe-area-inset-bottom, 0px))' 
-        } : undefined}
+        className="fixed z-60 left-3 right-3 md:left-1/2 md:right-auto md:-translate-x-1/2 md:max-w-md md:w-full md:mx-auto mini-player-mobile md:bottom-6"
         layoutId="podcast-player"
       >
         <motion.div

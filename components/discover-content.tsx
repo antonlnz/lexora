@@ -88,7 +88,7 @@ export function DiscoverContent() {
   const [searchQuery, setSearchQuery] = useState("")
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 pb-24 md:pb-0">
       {/* Search */}
       <div className="relative max-w-2xl mx-auto hover-lift-subtle">
         <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-muted-foreground" />

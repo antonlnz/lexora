@@ -29,7 +29,6 @@ import {
   Command,
   CommandEmpty,
   CommandGroup,
-  CommandInput,
   CommandItem,
   CommandList,
   CommandSeparator,
@@ -39,26 +38,7 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { folderService } from '@/lib/services/folder-service'
-import type { ArchiveFolder, ArchiveFolderWithChildren } from '@/types/database'
-
-// Iconos disponibles para carpetas
-const FOLDER_ICONS = [
-  'folder',
-  'star',
-  'heart',
-  'bookmark',
-  'tag',
-  'file',
-  'archive',
-  'briefcase',
-  'coffee',
-  'code',
-  'book',
-  'music',
-  'video',
-  'image',
-  'link',
-] as const
+import type { ArchiveFolderWithChildren } from '@/types/database'
 
 // Colores disponibles para carpetas
 const FOLDER_COLORS = [

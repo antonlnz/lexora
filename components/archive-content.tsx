@@ -476,11 +476,11 @@ export function ArchiveContent() {
   }, [activeTab, readContent, folderContent, archivedContent, selectedFolderId, searchQuery, canSearch])
 
   // Helper para determinar si un contenido debe usar PodcastViewer
+  // Solo los podcasts de audio usan PodcastViewer, YouTube normal usa ContentViewer
   const shouldUsePodcastViewer = (content: ContentWithMetadata): boolean => {
     const sourceType = content.source?.source_type
     const contentType = content.content_type
-    return contentType === 'podcast' || contentType === 'youtube' ||
-           sourceType === 'podcast' || sourceType === 'youtube_channel' || sourceType === 'youtube_video'
+    return contentType === 'podcast' || sourceType === 'podcast'
   }
 
   // Función para navegar al siguiente contenido
@@ -758,7 +758,7 @@ export function ArchiveContent() {
   const unfiledCount = archivedContent.filter(c => !c.user_content?.folder_id).length
 
   return (
-    <div className="space-y-6 md:space-y-8">
+    <div className="space-y-6 md:space-y-8 pb-24 md:pb-0">
       {/* Stats Overview - Scroll horizontal en mobile */}
       <div className="md:hidden -mx-4 px-4">
         <ScrollArea className="w-full">

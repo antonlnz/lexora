@@ -6,7 +6,6 @@ import type {
   PodcastContent,
   UserContent,
   UserContentInsert,
-  UserContentUpdate,
   ContentSource,
   UserSource
 } from '@/types/database'
@@ -175,6 +174,61 @@ export class ContentService {
     }
 
     return results
+  }
+
+  /**
+   * Obtiene un contenido específico por ID, buscando en todas las tablas de contenido
+   */
+  async getContentById(contentId: string): Promise<ContentWithMetadata | null> {
+    const supabase = this.getClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    
+    if (!user) return null
+
+    // Buscar en cada tipo de contenido
+    for (const contentType of ALL_CONTENT_TYPES) {
+      const table = CONTENT_TYPE_TO_TABLE[contentType]
+      
+      const { data: content, error } = await supabase
+        .from(table)
+        .select(`
+          *,
+          source:content_sources!inner(*),
+          user_source:content_sources!inner(user_sources(*))
+        `)
+        .eq('id', contentId)
+        .single()
+
+      if (error || !content) continue
+
+      // Verificar que el usuario tiene acceso a esta fuente
+      const { data: userSource } = await supabase
+        .from('user_sources')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('source_id', content.source_id)
+        .single()
+
+      if (!userSource) continue
+
+      // Obtener user_content si existe
+      const { data: userContent } = await supabase
+        .from('user_content')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('content_type', contentType)
+        .eq('content_id', contentId)
+        .single()
+
+      return {
+        ...content,
+        content_type: contentType,
+        user_content: userContent || null,
+        user_source: userSource
+      } as ContentWithMetadata
+    }
+
+    return null
   }
 
   /**
@@ -1051,7 +1105,117 @@ export class ContentService {
   }
 
   /**
-   * Busca contenido por título, descripción o autor
+   * Normaliza un texto para búsqueda (elimina acentos, convierte a minúsculas)
+   */
+  private normalizeText(text: string): string {
+    return text
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // Eliminar acentos
+      .replace(/[^a-z0-9\s]/g, '') // Solo letras, números y espacios
+      .trim()
+  }
+
+  /**
+   * Calcula la distancia de Levenshtein entre dos strings
+   * Usado para búsqueda fuzzy
+   */
+  private levenshteinDistance(str1: string, str2: string): number {
+    const m = str1.length
+    const n = str2.length
+    
+    // Crear matriz
+    const dp: number[][] = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0))
+    
+    // Inicializar primera fila y columna
+    for (let i = 0; i <= m; i++) dp[i][0] = i
+    for (let j = 0; j <= n; j++) dp[0][j] = j
+    
+    // Llenar la matriz
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        if (str1[i - 1] === str2[j - 1]) {
+          dp[i][j] = dp[i - 1][j - 1]
+        } else {
+          dp[i][j] = 1 + Math.min(
+            dp[i - 1][j],     // eliminación
+            dp[i][j - 1],     // inserción
+            dp[i - 1][j - 1]  // sustitución
+          )
+        }
+      }
+    }
+    
+    return dp[m][n]
+  }
+
+  /**
+   * Calcula un score de similitud entre 0 y 1
+   */
+  private similarityScore(str1: string, str2: string): number {
+    const normalized1 = this.normalizeText(str1)
+    const normalized2 = this.normalizeText(str2)
+    
+    if (normalized1 === normalized2) return 1
+    if (normalized1.length === 0 || normalized2.length === 0) return 0
+    
+    // Coincidencia exacta parcial
+    if (normalized2.includes(normalized1)) return 0.95
+    if (normalized1.includes(normalized2)) return 0.9
+    
+    // Buscar coincidencia de palabras
+    const words1 = normalized1.split(/\s+/)
+    const words2 = normalized2.split(/\s+/)
+    
+    let matchingWords = 0
+    for (const word1 of words1) {
+      if (word1.length < 2) continue
+      for (const word2 of words2) {
+        if (word2.includes(word1) || word1.includes(word2)) {
+          matchingWords++
+          break
+        }
+        // Coincidencia fuzzy por palabra
+        if (word1.length > 3 && word2.length > 3) {
+          const distance = this.levenshteinDistance(word1, word2)
+          const maxLen = Math.max(word1.length, word2.length)
+          if (distance / maxLen <= 0.3) { // 30% de diferencia máxima
+            matchingWords += 0.8
+            break
+          }
+        }
+      }
+    }
+    
+    if (matchingWords > 0) {
+      return Math.min(0.85, matchingWords / words1.length)
+    }
+    
+    // Distancia de Levenshtein para strings cortos
+    const maxLen = Math.max(normalized1.length, normalized2.length)
+    const distance = this.levenshteinDistance(normalized1, normalized2)
+    return Math.max(0, 1 - distance / maxLen)
+  }
+
+  /**
+   * Genera variantes de búsqueda para fuzzy matching
+   */
+  private generateSearchVariants(query: string): string[] {
+    const normalized = this.normalizeText(query)
+    const variants = new Set<string>([query, normalized])
+    
+    // Agregar versión sin espacios extras
+    variants.add(query.trim())
+    
+    // Agregar cada palabra individualmente si hay múltiples
+    const words = normalized.split(/\s+/).filter(w => w.length > 2)
+    words.forEach(word => variants.add(word))
+    
+    return Array.from(variants)
+  }
+
+  /**
+   * Busca contenido por título, descripción o autor con búsqueda fuzzy
    */
   async searchContent(
     searchQuery: string,
@@ -1076,78 +1240,110 @@ export class ContentService {
       ? [contentType] 
       : ALL_CONTENT_TYPES
 
+    // Generar variantes de búsqueda para fuzzy matching
+    const searchVariants = this.generateSearchVariants(searchQuery)
+    const normalizedQuery = this.normalizeText(searchQuery)
+
     const allResults: ContentWithMetadata[] = []
+    const seenIds = new Set<string>()
 
     for (const type of types) {
       const table = CONTENT_TYPE_TO_TABLE[type]
       
-      // Construir query de búsqueda dependiendo del tipo
-      let searchCondition = ''
-      if (type === 'rss') {
-        searchCondition = `title.ilike.%${searchQuery}%,content.ilike.%${searchQuery}%,author.ilike.%${searchQuery}%`
-      } else if (type === 'youtube') {
-        searchCondition = `title.ilike.%${searchQuery}%,description.ilike.%${searchQuery}%,channel_name.ilike.%${searchQuery}%`
-      } else if (type === 'twitter') {
-        searchCondition = `text_content.ilike.%${searchQuery}%,author_name.ilike.%${searchQuery}%`
-      } else if (type === 'instagram') {
-        searchCondition = `caption.ilike.%${searchQuery}%,author_username.ilike.%${searchQuery}%`
-      } else if (type === 'tiktok') {
-        searchCondition = `description.ilike.%${searchQuery}%,author_username.ilike.%${searchQuery}%`
-      } else if (type === 'podcast') {
-        searchCondition = `title.ilike.%${searchQuery}%,description.ilike.%${searchQuery}%,author.ilike.%${searchQuery}%`
-      }
+      // Buscar con cada variante
+      for (const variant of searchVariants) {
+        // Construir query de búsqueda dependiendo del tipo
+        let searchCondition = ''
+        if (type === 'rss') {
+          searchCondition = `title.ilike.%${variant}%,content.ilike.%${variant}%,author.ilike.%${variant}%`
+        } else if (type === 'youtube') {
+          searchCondition = `title.ilike.%${variant}%,description.ilike.%${variant}%,channel_name.ilike.%${variant}%`
+        } else if (type === 'twitter') {
+          searchCondition = `text_content.ilike.%${variant}%,author_name.ilike.%${variant}%`
+        } else if (type === 'instagram') {
+          searchCondition = `caption.ilike.%${variant}%,author_username.ilike.%${variant}%`
+        } else if (type === 'tiktok') {
+          searchCondition = `description.ilike.%${variant}%,author_username.ilike.%${variant}%`
+        } else if (type === 'podcast') {
+          searchCondition = `title.ilike.%${variant}%,description.ilike.%${variant}%,author.ilike.%${variant}%`
+        }
 
-      const { data: content } = await supabase
-        .from(table)
-        .select(`
-          *,
-          source:content_sources!inner(*),
-          user_source:content_sources!inner(user_sources!inner(*))
-        `)
-        .in('source_id', sourceIds)
-        .or(searchCondition)
-        .order('published_at', { ascending: false })
-        .limit(20)
+        const { data: content } = await supabase
+          .from(table)
+          .select(`
+            *,
+            source:content_sources!inner(*),
+            user_source:content_sources!inner(user_sources!inner(*))
+          `)
+          .in('source_id', sourceIds)
+          .or(searchCondition)
+          .order('published_at', { ascending: false })
+          .limit(30)
 
-      if (content) {
-        // Obtener user_content para estos resultados
-        const contentIds = content.map(c => c.id)
-        const { data: userContentData } = await supabase
-          .from('user_content')
-          .select('*')
-          .eq('user_id', user.id)
-          .eq('content_type', type)
-          .in('content_id', contentIds)
+        if (content) {
+          // Filtrar duplicados
+          const newContent = content.filter(c => !seenIds.has(c.id))
+          newContent.forEach(c => seenIds.add(c.id))
 
-        const userContentMap = new Map(
-          (userContentData || []).map(uc => [uc.content_id, uc])
-        )
+          if (newContent.length > 0) {
+            // Obtener user_content para estos resultados
+            const contentIds = newContent.map(c => c.id)
+            const { data: userContentData } = await supabase
+              .from('user_content')
+              .select('*')
+              .eq('user_id', user.id)
+              .eq('content_type', type)
+              .in('content_id', contentIds)
 
-        const results = content.map(item => ({
-          ...item,
-          content_type: type,
-          user_content: userContentMap.get(item.id) || null
-        })) as ContentWithMetadata[]
+            const userContentMap = new Map(
+              (userContentData || []).map(uc => [uc.content_id, uc])
+            )
 
-        allResults.push(...results)
+            const results = newContent.map(item => ({
+              ...item,
+              content_type: type,
+              user_content: userContentMap.get(item.id) || null
+            })) as ContentWithMetadata[]
+
+            allResults.push(...results)
+          }
+        }
       }
     }
 
-    // Ordenar por relevancia (los que tienen el término en el título primero)
-    return allResults.sort((a, b) => {
-      const aTitle = 'title' in a ? a.title : ''
-      const bTitle = 'title' in b ? b.title : ''
-      const aMatch = aTitle.toLowerCase().includes(searchQuery.toLowerCase())
-      const bMatch = bTitle.toLowerCase().includes(searchQuery.toLowerCase())
+    // Ordenar por relevancia usando similaridad fuzzy
+    const scoredResults = allResults.map(item => {
+      const title = 'title' in item ? (item.title || '') : ''
+      const description = 'description' in item ? ((item as any).description || '') : ''
+      const author = 'author' in item ? ((item as any).author || '') : 
+                     'channel_name' in item ? ((item as any).channel_name || '') : ''
       
-      if (aMatch && !bMatch) return -1
-      if (!aMatch && bMatch) return 1
+      // Calcular scores de similitud
+      const titleScore = this.similarityScore(normalizedQuery, title) * 1.5 // Peso extra para título
+      const descScore = this.similarityScore(normalizedQuery, description) * 0.8
+      const authorScore = this.similarityScore(normalizedQuery, author) * 0.7
       
-      // Si ambos coinciden o ninguno, ordenar por fecha
-      const aDate = a.published_at || ''
-      const bDate = b.published_at || ''
-      return bDate.localeCompare(aDate)
+      // Tomar el mejor score
+      const maxScore = Math.max(titleScore, descScore, authorScore)
+      
+      return { item, score: maxScore }
     })
+
+    // Filtrar resultados con score muy bajo y ordenar por score
+    return scoredResults
+      .filter(r => r.score > 0.2) // Umbral mínimo de relevancia
+      .sort((a, b) => {
+        // Primero por score
+        if (Math.abs(a.score - b.score) > 0.1) {
+          return b.score - a.score
+        }
+        // Si scores similares, por fecha
+        const aDate = a.item.published_at || ''
+        const bDate = b.item.published_at || ''
+        return bDate.localeCompare(aDate)
+      })
+      .map(r => r.item)
+      .slice(0, 50) // Limitar resultados
   }
 }
 

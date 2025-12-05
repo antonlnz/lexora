@@ -36,7 +36,7 @@ export function usePendingDeletions() {
   return context
 }
 
-const DELETION_TIMEOUT = 10000 // 10 segundos
+const DELETION_TIMEOUT = 5000 // 10 segundos
 
 export function PendingDeletionsProvider({ children }: { children: React.ReactNode }) {
   const [pendingDeletions, setPendingDeletions] = useState<PendingDeletion[]>([])

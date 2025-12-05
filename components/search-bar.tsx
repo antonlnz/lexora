@@ -1,26 +1,37 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { Search, X, Bookmark, BookmarkCheck, Clock } from "lucide-react"
+import { Search, X, BookmarkCheck, Clock, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { cn } from "@/lib/utils"
 import { contentService, type ContentWithMetadata } from "@/lib/services/content-service"
 import { getContentThumbnail, getContentMediaUrl, getContentMediaType } from "@/lib/content-type-config"
-import Link from "next/link"
+import { generateContentSlug } from "@/lib/utils/content-slug"
+import { useRouter } from "next/navigation"
 import Image from "next/image"
 
 interface SearchBarProps {
   onClose?: () => void
+  defaultExpanded?: boolean
 }
 
-export function SearchBar({ onClose }: SearchBarProps) {
-  const [isExpanded, setIsExpanded] = useState(false)
+export function SearchBar({ onClose, defaultExpanded = false }: SearchBarProps) {
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded)
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<ContentWithMetadata[]>([])
   const [isSearching, setIsSearching] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const searchRef = useRef<HTMLDivElement>(null)
+  const router = useRouter()
+
+  // Función para abrir contenido en el viewer
+  const handleOpenContent = (article: ContentWithMetadata) => {
+    const slug = generateContentSlug(article.id, article.title)
+    // Navegar a la página principal con solo el parámetro viewer
+    router.push(`/?viewer=${encodeURIComponent(slug)}`)
+    // Cerrar el buscador con un pequeño delay para permitir la navegación
+    setTimeout(() => handleClose(), 50)
+  }
 
   // Auto-focus cuando se expande
   useEffect(() => {
@@ -116,8 +127,8 @@ export function SearchBar({ onClose }: SearchBarProps) {
   return (
     <div ref={searchRef} className="relative">
       {/* Search Input */}
-      <div className="flex items-center gap-2 glass-card rounded-full px-4 py-2 min-w-[300px] md:min-w-[400px]">
-        <Search className="h-4 w-4 text-muted-foreground" />
+      <div className="flex items-center gap-2 desktop-search-input rounded-full px-4 py-2 min-w-[300px] md:min-w-[400px]">
+        <Search className="h-4 w-4 text-muted-foreground shrink-0" />
         <Input
           ref={inputRef}
           type="text"
@@ -130,7 +141,7 @@ export function SearchBar({ onClose }: SearchBarProps) {
           <Button
             variant="ghost"
             size="sm"
-            className="h-6 w-6 p-0 hover:bg-accent/50 rounded-full"
+            className="h-6 w-6 p-0 hover:bg-accent/50 rounded-full shrink-0"
             onClick={() => setQuery("")}
           >
             <X className="h-3 w-3" />
@@ -139,7 +150,7 @@ export function SearchBar({ onClose }: SearchBarProps) {
         <Button
           variant="ghost"
           size="sm"
-          className="h-6 w-6 p-0 hover:bg-accent/50 rounded-full"
+          className="h-6 w-6 p-0 hover:bg-accent/50 rounded-full shrink-0"
           onClick={handleClose}
         >
           <X className="h-4 w-4" />
@@ -148,21 +159,24 @@ export function SearchBar({ onClose }: SearchBarProps) {
 
       {/* Search Results Popup */}
       {query.trim().length >= 2 && (
-        <div className="absolute top-full mt-2 right-0 w-[400px] md:w-[500px] glass-card rounded-lg shadow-lg max-h-[500px] overflow-y-auto z-50">
+        <div className="absolute top-full mt-2 right-0 w-[400px] md:w-[500px] desktop-search-results rounded-2xl shadow-2xl max-h-[500px] overflow-hidden z-50">
           {isSearching ? (
-            <div className="p-8 text-center text-muted-foreground">
-              <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full mx-auto mb-2" />
-              Buscando...
+            <div className="flex items-center justify-center py-10">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              <span className="ml-2 text-sm text-muted-foreground">Buscando...</span>
             </div>
           ) : results.length === 0 ? (
-            <div className="p-8 text-center text-muted-foreground">
-              No se encontraron resultados para "{query}"
+            <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
+              <Search className="h-10 w-10 mb-2 opacity-30" />
+              <p className="text-sm">No se encontraron resultados</p>
+              <p className="text-xs opacity-70 mt-1">Intenta con otros términos</p>
             </div>
           ) : (
-            <div className="py-2">
-              <div className="px-4 py-2 text-xs text-muted-foreground font-medium">
+            <div className="overflow-y-auto max-h-[500px]">
+              <div className="px-4 py-3 text-xs text-muted-foreground font-medium border-b border-border/30 sticky top-0 bg-inherit backdrop-blur-sm">
                 {results.length} {results.length === 1 ? "resultado" : "resultados"}
               </div>
+              <div className="p-2">
               {results.map((article) => {
                 const thumbnailUrl = getContentThumbnail(article)
                 const mediaUrl = getContentMediaUrl(article)
@@ -170,86 +184,84 @@ export function SearchBar({ onClose }: SearchBarProps) {
                 const imageToShow = mediaType === 'image' ? (mediaUrl || thumbnailUrl) : thumbnailUrl
 
                 return (
-                <Link
+                <button
                   key={article.id}
-                  href={`/read/${article.id}`}
-                  onClick={handleClose}
-                  className="block px-4 py-3 hover:bg-accent/50 transition-colors border-b border-border/50 last:border-0"
+                  onClick={() => handleOpenContent(article)}
+                  className="flex gap-3 p-3 rounded-xl hover:bg-accent/50 active:bg-accent/70 transition-colors w-full text-left"
                 >
-                  <div className="flex gap-3">
-                    {/* Imagen */}
-                    {imageToShow ? (
-                      <div className="relative w-16 h-16 rounded-md overflow-hidden shrink-0 bg-muted">
-                        <Image
-                          src={imageToShow || '/placeholder.svg'}
-                          alt={article.title}
-                          fill
-                          className="object-cover"
-                          sizes="64px"
-                        />
-                      </div>
-                    ) : (
-                      <div className="w-16 h-16 rounded-md bg-linear-to-br from-primary/20 to-primary/5 flex items-center justify-center shrink-0">
-                        <Search className="h-6 w-6 text-primary/50" />
-                      </div>
-                    )}
+                  {/* Imagen */}
+                  {imageToShow ? (
+                    <div className="relative w-14 h-14 rounded-lg overflow-hidden shrink-0 bg-muted">
+                      <Image
+                        src={imageToShow || '/placeholder.svg'}
+                        alt={article.title}
+                        fill
+                        className="object-cover"
+                        sizes="56px"
+                      />
+                    </div>
+                  ) : (
+                    <div className="w-14 h-14 rounded-lg bg-linear-to-br from-primary/20 to-primary/5 flex items-center justify-center shrink-0">
+                      <Search className="h-5 w-5 text-primary/50" />
+                    </div>
+                  )}
 
-                    {/* Contenido */}
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-medium text-sm line-clamp-2 mb-1">
-                        {article.title}
-                      </h3>
+                  {/* Contenido */}
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-medium text-sm line-clamp-2 leading-tight">
+                      {article.title}
+                    </h3>
+                    
+                    {/* Metadata */}
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1 flex-wrap">
+                      <span className="truncate max-w-[150px]">
+                        {article.source?.title || "Fuente desconocida"}
+                      </span>
                       
-                      {/* Metadata */}
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
-                        <span className="truncate max-w-[150px]">
-                          {article.source?.title || "Fuente desconocida"}
+                      {article.published_at && (
+                        <>
+                          <span>•</span>
+                          <span className="flex items-center gap-0.5">
+                            <Clock className="h-3 w-3" />
+                            {formatDate(article.published_at)}
+                          </span>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Estado badges */}
+                    <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                      {article.user_content?.is_favorite && (
+                        <span className="inline-flex items-center gap-0.5 text-[10px] bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 px-1.5 py-0.5 rounded-full">
+                          <BookmarkCheck className="h-2.5 w-2.5" />
+                          Guardado
                         </span>
-                        
-                        {article.published_at && (
-                          <>
-                            <span>•</span>
-                            <span className="flex items-center gap-1">
-                              <Clock className="h-3 w-3" />
-                              {formatDate(article.published_at)}
-                            </span>
-                          </>
-                        )}
-                      </div>
+                      )}
+                      
+                      {article.user_content?.is_archived && (
+                        <span className="inline-flex items-center text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 px-1.5 py-0.5 rounded-full">
+                          Archivado
+                        </span>
+                      )}
+                      
+                      {article.user_content?.is_read && (
+                        <span className="inline-flex items-center text-[10px] bg-green-500/10 text-green-600 dark:text-green-400 px-1.5 py-0.5 rounded-full">
+                          Leído
+                        </span>
+                      )}
 
-                      {/* Estado */}
-                      <div className="flex items-center gap-2 mt-2">
-                        {article.user_content?.is_favorite && (
-                          <span className="inline-flex items-center gap-1 text-xs bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 px-2 py-0.5 rounded-full">
-                            <BookmarkCheck className="h-3 w-3" />
-                            Guardado
-                          </span>
-                        )}
-                        
-                        {article.user_content?.is_archived && (
-                          <span className="inline-flex items-center gap-1 text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded-full">
-                            Archivado
-                          </span>
-                        )}
-                        
-                        {article.user_content?.is_read && (
-                          <span className="inline-flex items-center gap-1 text-xs bg-green-500/10 text-green-600 dark:text-green-400 px-2 py-0.5 rounded-full">
-                            Leído
-                          </span>
-                        )}
-
-                        {!article.user_content?.is_read && 
-                         !article.user_content?.is_favorite && 
-                         !article.user_content?.is_archived && (
-                          <span className="inline-flex items-center gap-1 text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
-                            Sin leer
-                          </span>
-                        )}
-                      </div>
+                      {!article.user_content?.is_read && 
+                       !article.user_content?.is_favorite && 
+                       !article.user_content?.is_archived && (
+                        <span className="inline-flex items-center text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">
+                          Sin leer
+                        </span>
+                      )}
                     </div>
                   </div>
-                </Link>
+                </button>
               )})}
+              </div>
             </div>
           )}
         </div>

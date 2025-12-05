@@ -64,14 +64,6 @@ function formatVideoDuration(seconds: number): string {
   return `${minutes}:${secs.toString().padStart(2, '0')}`
 }
 
-// Función auxiliar para detectar si una URL es un video
-function isVideoUrl(url: string | null | undefined): boolean {
-  if (!url) return false
-  const videoExtensions = ['.mp4', '.webm', '.ogg', '.mov', '.avi', '.wmv', '.flv', '.mkv', '.m4v']
-  const lowerUrl = url.toLowerCase()
-  return videoExtensions.some(ext => lowerUrl.includes(ext))
-}
-
 // Función para obtener el thumbnail de un video de YouTube
 function getYouTubeThumbnail(url: string | null | undefined): string | null {
   if (!url) return null
@@ -171,6 +163,7 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
   )
   const [savingToFolder, setSavingToFolder] = useState(false)
   const cardRef = useRef<HTMLDivElement>(null)
+  const pointerDownTarget = useRef<EventTarget | null>(null)
   
   // Get display settings from context
   const { showThumbnails, showExcerpts, compactView } = useCardDisplaySettings()
@@ -234,6 +227,22 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
     }
   }
 
+  // Handlers para evitar problemas de doble clic con elementos interactivos anidados
+  const handlePointerDown = (e: React.PointerEvent) => {
+    pointerDownTarget.current = e.target
+  }
+
+  const handleClick = (e: React.MouseEvent) => {
+    // Solo abrir el viewer si el pointerDown y el click fueron en el mismo elemento
+    // y no fue en un elemento interactivo (botones, links, etc.)
+    const target = e.target as HTMLElement
+    const isInteractive = target.closest('button, a, [role="button"], [data-radix-collection-item]')
+    
+    if (!isInteractive && pointerDownTarget.current === e.target) {
+      handleOpenContent()
+    }
+  }
+
   const handleOpenInNewTab = (e: React.MouseEvent) => {
     e.stopPropagation()
     window.open(`/read/${article.id}`, "_blank")
@@ -265,17 +274,14 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
   
   // Verificar si es contenido de YouTube (no se puede cargar directamente en <video>)
   const isYouTube = isYouTubeContent(article)
-  
-  // Si hay video pero no hay poster, mostrar el video con metadata para cargar el primer frame
-  // (solo para videos que NO son de YouTube)
-  const showVideoWithoutPoster = isVideo && videoSrc && !posterSrc && !isYouTube
 
   if (viewMode === "list") {
     return (
       <Card
         ref={cardRef}
         className={`glass-card ${compactView ? 'p-2' : 'p-4'} hover-lift-subtle transition-all duration-300 cursor-pointer ${isRead ? "opacity-60" : ""}`}
-        onClick={handleOpenContent}
+        onPointerDown={handlePointerDown}
+        onClick={handleClick}
       >
         <div className="flex gap-4">
           {showThumbnails && (
@@ -474,7 +480,8 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
     <Card
       ref={cardRef}
       className={`glass-card overflow-hidden hover-lift-strong transition-all duration-300 group cursor-pointer flex flex-col h-full p-0! gap-0! ${isRead ? "opacity-60" : ""}`}
-      onClick={handleOpenContent}
+      onPointerDown={handlePointerDown}
+      onClick={handleClick}
     >
       {showThumbnails && (
         <div className={`relative ${compactView ? 'aspect-2/1' : 'aspect-video'} overflow-hidden bg-muted rounded-t-xl`}>

@@ -12,6 +12,7 @@ import { SessionSyncProvider } from "@/components/session-sync-provider"
 import { ThemeProvider } from "@/components/theme-provider"
 import { MiniPodcastPlayer } from "@/components/mini-podcast-player"
 import { YouTubeBackgroundPlayer } from "@/components/youtube-background-player"
+import { Toaster } from "@/components/ui/sonner"
 import "./globals.css"
 
 const inter = Inter({
@@ -48,6 +49,9 @@ export const metadata: Metadata = {
     icon: "/placeholder-logo.png",
     apple: "/placeholder-logo.png",
   },
+  other: {
+    "theme-color": "#fafaf9",
+  },
 }
 
 export const viewport: Viewport = {
@@ -81,6 +85,7 @@ export default function RootLayout({
                       <Suspense fallback={null}>{children}</Suspense>
                       <MiniPodcastPlayer />
                       <YouTubeBackgroundPlayer />
+                      <Toaster />
                     </SessionSyncProvider>
                   </PodcastPlayerProvider>
                 </PendingDeletionsProvider>
