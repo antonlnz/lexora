@@ -31,8 +31,8 @@ import { FolderPicker } from "@/components/folder-picker"
 interface DynamicIslandProps {
   onClose: () => void
   isSaved?: boolean
-  onToggleArchive?: () => void
-  onSaveToFolder?: (folderId: string | null) => void
+  onToggleArchive?: () => void | Promise<void>
+  onSaveToFolder?: (folderId: string | null) => void | Promise<void>
   currentFolderId?: string | null
   savingToFolder?: boolean
   onDownload: () => void
@@ -174,17 +174,32 @@ export function DynamicIsland({
     }
   }, [isHovered, isMobile, isScrolling, isSettingsOpen, isFolderPickerOpen])
 
-  // Cerrar al hacer clic fuera (solo si el popover no está abierto)
+  // Cerrar al hacer clic fuera (solo si los popovers no están abiertos)
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (isExpanded && !isSettingsOpen && !isFolderPickerOpen && islandRef.current && !islandRef.current.contains(event.target as Node)) {
-        setIsExpanded(false)
+      // No cerrar si hay un popover abierto
+      if (isSettingsOpen || isFolderPickerOpen) return
+      
+      if (isExpanded && islandRef.current && !islandRef.current.contains(event.target as Node)) {
+        // Verificar que el clic no sea en un drawer/popover
+        const target = event.target as HTMLElement
+        const isInDrawer = target.closest('[data-slot="drawer-content"]') || 
+                          target.closest('[data-radix-popper-content-wrapper]') ||
+                          target.closest('[role="dialog"]')
+        if (!isInDrawer) {
+          setIsExpanded(false)
+        }
       }
     }
 
-    if (isExpanded) {
+    // Usar timeout para evitar cerrar inmediatamente después de cerrar un picker
+    const timeoutId = setTimeout(() => {
       document.addEventListener('mousedown', handleClickOutside)
-      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }, 100)
+    
+    return () => {
+      clearTimeout(timeoutId)
+      document.removeEventListener('mousedown', handleClickOutside)
     }
   }, [isExpanded, isSettingsOpen, isFolderPickerOpen])
 

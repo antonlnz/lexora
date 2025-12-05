@@ -409,11 +409,8 @@ export class SourceService {
     const { data: { user } } = await supabase.auth.getUser()
     
     if (!user) {
-      console.log('[deleteSourceCompletely] No user found')
       return
     }
-
-    console.log(`[deleteSourceCompletely] Starting deletion for source ${sourceId}, deleteSavedContent: ${deleteSavedContent}`)
 
     try {
       // Obtener información de la fuente
@@ -423,7 +420,6 @@ export class SourceService {
         .eq('id', sourceId)
 
       if (sourceError) {
-        console.error('[deleteSourceCompletely] Error fetching source:', sourceError)
         throw new Error('Error fetching source')
       }
 
@@ -431,26 +427,15 @@ export class SourceService {
 
       if (!source) {
         // La fuente ya no existe - esto es válido, simplemente eliminamos la suscripción del usuario
-        console.log('[deleteSourceCompletely] Source not found in content_sources, cleaning up user_sources only')
-        
-        const { error: userSourceError } = await supabase
+        await supabase
           .from('user_sources')
           .delete()
           .eq('user_id', user.id)
           .eq('source_id', sourceId)
-
-        if (userSourceError) {
-          console.error('[deleteSourceCompletely] Error deleting user_source:', userSourceError)
-        }
-        
-        console.log('[deleteSourceCompletely] Cleanup completed for non-existent source')
         return
       }
 
-      console.log(`[deleteSourceCompletely] Found source: ${source.title} (type: ${source.source_type})`)
-
       const contentInfo = SOURCE_TO_CONTENT_MAP[source.source_type as SourceType]
-      console.log(`[deleteSourceCompletely] Content table: ${contentInfo.table}, content type: ${contentInfo.contentType}`)
 
       // Obtener todos los IDs de contenido de esta fuente
       const { data: contentItems, error: contentItemsError } = await supabase
@@ -463,7 +448,6 @@ export class SourceService {
       }
 
       const contentIds = contentItems?.map(item => item.id) || []
-      console.log(`[deleteSourceCompletely] Found ${contentIds.length} content items`)
 
       // Contar suscriptores ANTES de eliminar
       const { count: subscriberCount, error: countError } = await supabase
@@ -475,15 +459,12 @@ export class SourceService {
         console.error('[deleteSourceCompletely] Error counting subscribers:', countError)
       }
 
-      console.log(`[deleteSourceCompletely] Subscriber count: ${subscriberCount}`)
       const isOnlySubscriber = (subscriberCount || 0) <= 1
-      console.log(`[deleteSourceCompletely] Is only subscriber: ${isOnlySubscriber}`)
 
       // 1. Eliminar user_content del usuario para esta fuente
       if (contentIds.length > 0) {
         if (deleteSavedContent) {
           // Eliminar todo el user_content (incluyendo archivados)
-          console.log('[deleteSourceCompletely] Deleting all user_content (including archived)')
           const { error: userContentError } = await supabase
             .from('user_content')
             .delete()
@@ -496,7 +477,6 @@ export class SourceService {
           }
         } else {
           // Eliminar solo el user_content que NO está archivado
-          console.log('[deleteSourceCompletely] Deleting non-archived user_content only')
           const { error: userContentError } = await supabase
             .from('user_content')
             .delete()
@@ -514,12 +494,9 @@ export class SourceService {
       // 2. Si es el único suscriptor, eliminar contenido y fuente ANTES de eliminar user_sources
       // (Las políticas RLS requieren que exista el registro en user_sources para verificar permisos)
       if (isOnlySubscriber) {
-        console.log('[deleteSourceCompletely] User is only subscriber, proceeding with full deletion')
-        
         // Eliminar contenido de la tabla correspondiente
         if (contentIds.length > 0) {
           // Primero eliminar cualquier user_content restante de otros usuarios
-          console.log(`[deleteSourceCompletely] Cleaning up all user_content for ${contentIds.length} content items`)
           const { error: userContentCleanupError } = await supabase
             .from('user_content')
             .delete()
@@ -528,12 +505,9 @@ export class SourceService {
 
           if (userContentCleanupError) {
             console.error('[deleteSourceCompletely] Error cleaning up user_content:', userContentCleanupError)
-          } else {
-            console.log('[deleteSourceCompletely] Successfully cleaned up user_content')
           }
 
           // Eliminar el contenido de la tabla específica
-          console.log(`[deleteSourceCompletely] Deleting content from ${contentInfo.table}`)
           const { error: contentError } = await supabase
             .from(contentInfo.table)
             .delete()
@@ -541,15 +515,10 @@ export class SourceService {
 
           if (contentError) {
             console.error('[deleteSourceCompletely] Error deleting content:', contentError)
-          } else {
-            console.log(`[deleteSourceCompletely] Successfully deleted content`)
           }
-        } else {
-          console.log('[deleteSourceCompletely] No content items to delete')
         }
 
         // Eliminar la fuente de content_sources
-        console.log(`[deleteSourceCompletely] Deleting source from content_sources`)
         const { error: sourceDeleteError } = await supabase
           .from('content_sources')
           .delete()
@@ -557,15 +526,10 @@ export class SourceService {
 
         if (sourceDeleteError) {
           console.error('[deleteSourceCompletely] Error deleting source:', sourceDeleteError)
-        } else {
-          console.log('[deleteSourceCompletely] Successfully deleted source from content_sources')
         }
-      } else {
-        console.log('[deleteSourceCompletely] Other subscribers exist, only removing user subscription')
       }
 
       // 3. Eliminar suscripción del usuario (al final para que las políticas RLS funcionen arriba)
-      console.log(`[deleteSourceCompletely] Deleting user_sources for user ${user.id}`)
       const { error: unsubError } = await supabase
         .from('user_sources')
         .delete()
@@ -576,9 +540,6 @@ export class SourceService {
         console.error('[deleteSourceCompletely] Error deleting user_sources:', unsubError)
         throw unsubError
       }
-      console.log('[deleteSourceCompletely] Successfully deleted user_sources')
-      
-      console.log('[deleteSourceCompletely] Deletion complete')
     } catch (error) {
       console.error('[deleteSourceCompletely] Error:', error)
       throw error

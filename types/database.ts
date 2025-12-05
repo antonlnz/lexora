@@ -647,6 +647,8 @@ export interface Database {
           archived_at: string | null
           favorited_at: string | null
           last_accessed_at: string | null
+          clip_start_seconds: number | null
+          clip_end_seconds: number | null
           created_at: string
           updated_at: string
         }
@@ -666,6 +668,8 @@ export interface Database {
           archived_at?: string | null
           favorited_at?: string | null
           last_accessed_at?: string | null
+          clip_start_seconds?: number | null
+          clip_end_seconds?: number | null
           created_at?: string
           updated_at?: string
         }
@@ -681,6 +685,8 @@ export interface Database {
           archived_at?: string | null
           favorited_at?: string | null
           last_accessed_at?: string | null
+          clip_start_seconds?: number | null
+          clip_end_seconds?: number | null
           updated_at?: string
         }
       }

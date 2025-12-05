@@ -36,7 +36,7 @@ export function AmbientBackground({ imageUrl, isActive, intensity = 0.3 }: Ambie
 
         img.src = imageUrl
       } catch (error) {
-        console.log("Error extracting colors:", error)
+        console.error("Error extracting colors:", error)
       }
     }
 

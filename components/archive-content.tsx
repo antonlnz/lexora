@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
+import { useSearchParams, useRouter, usePathname } from "next/navigation"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -8,8 +9,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { GlassStatsCard } from "@/components/glass-components"
 import { ContentCard } from "@/components/content-card"
 import { ContentViewer } from "@/components/content-viewer"
+import { PodcastViewer } from "@/components/podcast-viewer"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
+import { usePodcastPlayer, type PodcastEpisode } from "@/contexts/podcast-player-context"
 import { 
   Search, 
   Bookmark, 
@@ -36,6 +39,7 @@ import { contentService, type ContentWithMetadata } from "@/lib/services/content
 import { folderService } from "@/lib/services/folder-service"
 import type { ArchiveFolder, ArchiveFolderWithChildren } from "@/types/database"
 import { cn } from "@/lib/utils"
+import { generateContentSlug, parseContentSlug } from "@/lib/utils/content-slug"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -81,11 +85,67 @@ const FOLDER_COLORS = [
 export function ArchiveContent() {
   const { hasFeature, currentPlan } = useSubscription()
   const isMobile = useIsMobile()
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
+  
   const [searchQuery, setSearchQuery] = useState("")
   const [archivedContent, setArchivedContent] = useState<ContentWithMetadata[]>([])
   const [readContent, setReadContent] = useState<ContentWithMetadata[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedArticle, setSelectedArticle] = useState<ContentWithMetadata | null>(null)
+  const [activeTab, setActiveTab] = useState<"saved" | "read">("saved")
+  
+  // Estado para podcast viewer
+  const [isPodcastViewerOpen, setIsPodcastViewerOpen] = useState(false)
+  const [currentPodcastEpisode, setCurrentPodcastEpisode] = useState<PodcastEpisode | null>(null)
+  const [podcastEpisodes, setPodcastEpisodes] = useState<PodcastEpisode[]>([])
+
+  // Refs para manejar URL de visor
+  const isOpeningFromUrl = useRef(false)
+  const hasProcessedInitialUrl = useRef(false)
+
+  // Hook del podcast player para detectar cuando se quiere maximizar
+  const { shouldOpenViewer, clearShouldOpenViewer, currentEpisode } = usePodcastPlayer()
+
+  // Abrir el podcast viewer cuando se maximiza desde el mini player
+  useEffect(() => {
+    if (shouldOpenViewer && currentEpisode) {
+      setCurrentPodcastEpisode(currentEpisode)
+      
+      // Cargar episodios del mismo podcast si aún no están cargados
+      if (archivedContent.length > 0 && currentEpisode.source_id) {
+        const allPodcastEpisodes = archivedContent
+          .filter(a => a.source_id === currentEpisode.source_id && a.source.source_type === 'podcast')
+          .map(a => ({
+            id: a.id,
+            source_id: a.source_id,
+            title: a.title,
+            url: a.url,
+            author: (a as any).author || null,
+            published_at: a.published_at || null,
+            description: (a as any).description || null,
+            show_notes: (a as any).show_notes || null,
+            audio_url: (a as any).audio_url,
+            image_url: (a as any).image_url || null,
+            duration: (a as any).duration || null,
+            episode_number: (a as any).episode_number || null,
+            season_number: (a as any).season_number || null,
+            created_at: (a as any).created_at || new Date().toISOString(),
+            updated_at: (a as any).updated_at || new Date().toISOString(),
+            source: a.source,
+          })) as PodcastEpisode[]
+        
+        if (allPodcastEpisodes.length > 0) {
+          setPodcastEpisodes(allPodcastEpisodes)
+        }
+      }
+      
+      setIsPodcastViewerOpen(true)
+      clearShouldOpenViewer()
+    }
+  }, [shouldOpenViewer, currentEpisode, archivedContent, clearShouldOpenViewer])
+  
   const [stats, setStats] = useState({
     totalRead: 0,
     savedItems: 0,
@@ -225,16 +285,247 @@ export function ArchiveContent() {
   const filteredRead = filterContent(readContent)
   const filteredFolderContent = filterContent(folderContent)
 
-  const handleOpenViewer = (article: ContentWithMetadata) => {
+  const handleOpenViewer = useCallback((article: ContentWithMetadata) => {
+    // Actualizar URL solo si no estamos abriendo desde URL
+    if (!isOpeningFromUrl.current) {
+      const slug = generateContentSlug(article.id, article.title)
+      const params = new URLSearchParams(searchParams.toString())
+      params.set('viewer', slug)
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+    }
+    
+    // Detectar si es un podcast o un video de YouTube basándose en content_type
+    // (más fiable que source_type porque refleja cómo se guardó)
+    const isYouTube = article.content_type === 'youtube' || 
+                      article.source?.source_type === 'youtube_channel' || 
+                      article.source?.source_type === 'youtube_video' ||
+                      article.url?.includes('youtube.com') ||
+                      article.url?.includes('youtu.be')
+    const isPodcast = article.content_type === 'podcast' || article.source?.source_type === 'podcast'
+    
+    if (isPodcast || isYouTube) {
+      // Convertir a PodcastEpisode (funciona para podcasts y YouTube)
+      const episode: PodcastEpisode = {
+        id: article.id,
+        source_id: article.source_id,
+        title: article.title,
+        url: article.url,
+        author: (article as any).author || (article as any).channel_name || null,
+        published_at: article.published_at || null,
+        description: (article as any).description || null,
+        show_notes: (article as any).show_notes || (article as any).description || null,
+        // Para YouTube usar la URL del video como audio_url (el contexto detectará que es YouTube)
+        audio_url: isYouTube ? article.url : (article as any).audio_url,
+        image_url: (article as any).image_url || (article as any).thumbnail_url || null,
+        duration: (article as any).duration || null,
+        episode_number: (article as any).episode_number || null,
+        season_number: (article as any).season_number || null,
+        created_at: (article as any).created_at || new Date().toISOString(),
+        updated_at: (article as any).updated_at || new Date().toISOString(),
+        source: article.source || {
+          id: article.source_id,
+          source_type: isYouTube ? 'youtube_video' : 'podcast',
+          url: article.url,
+          title: (article as any).channel_name || article.title,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        } as any,
+        // Pasar información del clip si existe
+        clip_start_seconds: article.user_content?.clip_start_seconds ?? null,
+        clip_end_seconds: article.user_content?.clip_end_seconds ?? null,
+      }
+      
+      // Obtener todos los episodios/videos del mismo source de contenido archivado
+      const allEpisodes = archivedContent
+        .filter(a => a.source_id === article.source_id && (
+          a.content_type === 'podcast' || 
+          a.content_type === 'youtube' ||
+          a.source?.source_type === 'podcast' || 
+          a.source?.source_type === 'youtube_channel' || 
+          a.source?.source_type === 'youtube_video'
+        ))
+        .map(a => {
+          const aIsYouTube = a.content_type === 'youtube' || 
+                            a.source?.source_type === 'youtube_channel' || 
+                            a.source?.source_type === 'youtube_video' ||
+                            a.url?.includes('youtube.com') ||
+                            a.url?.includes('youtu.be')
+          return {
+            id: a.id,
+            source_id: a.source_id,
+            title: a.title,
+            url: a.url,
+            author: (a as any).author || (a as any).channel_name || null,
+            published_at: a.published_at || null,
+            description: (a as any).description || null,
+            show_notes: (a as any).show_notes || (a as any).description || null,
+            audio_url: aIsYouTube ? a.url : (a as any).audio_url,
+            image_url: (a as any).image_url || (a as any).thumbnail_url || null,
+            duration: (a as any).duration || null,
+            episode_number: (a as any).episode_number || null,
+            season_number: (a as any).season_number || null,
+            created_at: (a as any).created_at || new Date().toISOString(),
+            updated_at: (a as any).updated_at || new Date().toISOString(),
+            source: a.source || {
+              id: a.source_id,
+              source_type: aIsYouTube ? 'youtube_video' : 'podcast',
+              url: a.url,
+              title: (a as any).channel_name || a.title,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            } as any,
+            clip_start_seconds: a.user_content?.clip_start_seconds ?? null,
+            clip_end_seconds: a.user_content?.clip_end_seconds ?? null,
+          }
+        }) as PodcastEpisode[]
+      
+      setCurrentPodcastEpisode(episode)
+      setPodcastEpisodes(allEpisodes)
+      setIsPodcastViewerOpen(true)
+      return
+    }
+    
     setSelectedArticle(article)
-  }
+  }, [archivedContent, searchParams, pathname, router])
+
+  // Función para limpiar URL al cerrar visor
+  const clearViewerUrl = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('viewer')
+    const newUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname
+    router.replace(newUrl, { scroll: false })
+  }, [searchParams, pathname, router])
 
   const handleCloseViewer = () => {
+    clearViewerUrl()
     setSelectedArticle(null)
     // Recargar para actualizar estados
     loadContent()
     loadFolderContent(selectedFolderId)
   }
+  
+  const handleClosePodcastViewer = () => {
+    clearViewerUrl()
+    setIsPodcastViewerOpen(false)
+  }
+
+  // Efecto para abrir visor desde URL al cargar contenido
+  useEffect(() => {
+    // Solo procesar si tenemos contenido cargado y no hemos procesado ya la URL inicial
+    const allContent = [...archivedContent, ...readContent]
+    if (allContent.length === 0 || hasProcessedInitialUrl.current || loading) return
+    
+    const viewerParam = searchParams.get('viewer')
+    if (!viewerParam) {
+      hasProcessedInitialUrl.current = true
+      return
+    }
+    
+    const contentId = parseContentSlug(viewerParam)
+    if (!contentId) {
+      hasProcessedInitialUrl.current = true
+      return
+    }
+    
+    // Buscar el contenido por ID
+    const content = allContent.find(a => a.id === contentId)
+    if (content) {
+      // Marcar que estamos abriendo desde URL para evitar actualizar la URL de nuevo
+      isOpeningFromUrl.current = true
+      handleOpenViewer(content)
+      isOpeningFromUrl.current = false
+    }
+    
+    hasProcessedInitialUrl.current = true
+  }, [archivedContent, readContent, loading, searchParams, handleOpenViewer])
+
+  // Efecto para cerrar visor cuando el parámetro viewer desaparece de la URL (navegación hacia atrás)
+  useEffect(() => {
+    const viewerParam = searchParams.get('viewer')
+    
+    // Si no hay parámetro viewer y algún visor está abierto, cerrarlo
+    if (!viewerParam && (selectedArticle || isPodcastViewerOpen)) {
+      if (selectedArticle) {
+        setSelectedArticle(null)
+      }
+      if (isPodcastViewerOpen) {
+        setIsPodcastViewerOpen(false)
+      }
+    }
+  }, [searchParams, selectedArticle, isPodcastViewerOpen])
+
+  // Obtener la lista de contenido activa según la tab y carpeta seleccionada
+  const getActiveContentList = useCallback((): ContentWithMetadata[] => {
+    // Reimplementar el filtrado aquí para evitar dependencias inestables
+    const filter = (content: ContentWithMetadata[]) => {
+      if (!searchQuery.trim() || !canSearch) return content
+      const query = searchQuery.toLowerCase()
+      return content.filter(item => {
+        const title = 'title' in item ? (item.title as string)?.toLowerCase() : ''
+        const description = 'description' in item ? (item.description as string)?.toLowerCase() : ''
+        const content_text = 'content' in item ? (item.content as string)?.toLowerCase() : ''
+        return title.includes(query) || description.includes(query) || content_text.includes(query)
+      })
+    }
+    
+    if (activeTab === "read") {
+      return filter(readContent)
+    }
+    // En saved, si hay carpeta seleccionada usar folderContent, si no archivedContent
+    return filter(selectedFolderId ? folderContent : archivedContent)
+  }, [activeTab, readContent, folderContent, archivedContent, selectedFolderId, searchQuery, canSearch])
+
+  // Helper para determinar si un contenido debe usar PodcastViewer
+  const shouldUsePodcastViewer = (content: ContentWithMetadata): boolean => {
+    const sourceType = content.source?.source_type
+    const contentType = content.content_type
+    return contentType === 'podcast' || contentType === 'youtube' ||
+           sourceType === 'podcast' || sourceType === 'youtube_channel' || sourceType === 'youtube_video'
+  }
+
+  // Función para navegar al siguiente contenido
+  const handleNavigateNext = useCallback(() => {
+    const activeList = getActiveContentList()
+    const currentContent = selectedArticle || (isPodcastViewerOpen && currentPodcastEpisode ? 
+      activeList.find(c => c.id === currentPodcastEpisode.id) : null)
+    if (!currentContent) return
+    
+    const currentIndex = activeList.findIndex((item) => item.id === currentContent.id)
+    if (currentIndex !== -1 && currentIndex < activeList.length - 1) {
+      const nextContent = activeList[currentIndex + 1]
+      handleOpenViewer(nextContent)
+    }
+  }, [getActiveContentList, selectedArticle, isPodcastViewerOpen, currentPodcastEpisode, handleOpenViewer])
+
+  // Función para navegar al contenido anterior
+  const handleNavigatePrevious = useCallback(() => {
+    const activeList = getActiveContentList()
+    const currentContent = selectedArticle || (isPodcastViewerOpen && currentPodcastEpisode ? 
+      activeList.find(c => c.id === currentPodcastEpisode.id) : null)
+    if (!currentContent) return
+    
+    const currentIndex = activeList.findIndex((item) => item.id === currentContent.id)
+    if (currentIndex > 0) {
+      const previousContent = activeList[currentIndex - 1]
+      handleOpenViewer(previousContent)
+    }
+  }, [getActiveContentList, selectedArticle, isPodcastViewerOpen, currentPodcastEpisode, handleOpenViewer])
+
+  // Calcular si hay siguiente/anterior
+  const getNavigationState = useCallback(() => {
+    const activeList = getActiveContentList()
+    const currentContent = selectedArticle || (isPodcastViewerOpen && currentPodcastEpisode ? 
+      activeList.find(c => c.id === currentPodcastEpisode.id) : null)
+    if (!currentContent) return { hasNext: false, hasPrevious: false }
+    
+    const currentIndex = activeList.findIndex((item) => item.id === currentContent.id)
+    return {
+      hasNext: currentIndex !== -1 && currentIndex < activeList.length - 1,
+      hasPrevious: currentIndex > 0
+    }
+  }, [getActiveContentList, selectedArticle, isPodcastViewerOpen, currentPodcastEpisode])
+
+  const { hasNext, hasPrevious } = getNavigationState()
 
   // Handler para cuando se quita un item del archivo
   const handleUnarchive = useCallback((article: ContentWithMetadata) => {
@@ -472,13 +763,13 @@ export function ArchiveContent() {
       <div className="md:hidden -mx-4 px-4">
         <ScrollArea className="w-full">
           <div className="flex gap-4 pb-2">
-            <div className="shrink-0 w-[160px]">
+            <div className="shrink-0 w-40">
               <GlassStatsCard title="Total Read" value={stats.totalRead.toString()} change="" trend="up" icon={Clock} />
             </div>
-            <div className="shrink-0 w-[160px]">
+            <div className="shrink-0 w-40">
               <GlassStatsCard title="Saved Items" value={stats.savedItems.toString()} change="" trend="up" icon={Bookmark} />
             </div>
-            <div className="shrink-0 w-[160px]">
+            <div className="shrink-0 w-40">
               <GlassStatsCard title="Archived" value={stats.archived.toString()} change="" trend="up" icon={Archive} />
             </div>
           </div>
@@ -539,7 +830,7 @@ export function ArchiveContent() {
           </ProFeatureButton>
         </div>
 
-        <Tabs defaultValue="saved" className="w-full">
+        <Tabs defaultValue="saved" value={activeTab} onValueChange={(v) => setActiveTab(v as "saved" | "read")} className="w-full">
           <TabsList className="glass-card justify-start mb-6">
             <TabsTrigger value="saved" className="hover-lift-subtle">
               <Bookmark className="h-4 w-4 mr-2" />
@@ -659,7 +950,7 @@ export function ArchiveContent() {
                             <Inbox className="w-5 h-5 text-muted-foreground" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <span className="font-medium">Sin carpeta</span>
+                            <span className="font-medium">No folder</span>
                             <p className="text-xs text-muted-foreground">{unfiledCount} elementos</p>
                           </div>
                           {selectedFolderId === null && (
@@ -776,7 +1067,7 @@ export function ArchiveContent() {
                   ) : (
                     <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted text-sm font-medium text-muted-foreground">
                       <Inbox className="h-3.5 w-3.5" />
-                      <span>Sin carpeta</span>
+                      <span>No folder</span>
                     </div>
                   )}
                 </div>
@@ -824,7 +1115,7 @@ export function ArchiveContent() {
             </div>
 
             {/* Desktop: Layout original con sidebar */}
-            <div className="flex gap-6">
+            <div className="flex gap-6 mt-4 md:mt-0">
               {/* Sidebar de carpetas - Solo desktop */}
               <div className="w-64 shrink-0 hidden md:block">
                 <Card className="glass-card p-4 sticky top-4">
@@ -921,7 +1212,7 @@ export function ArchiveContent() {
                       <div className="flex items-center justify-center w-6 h-6 rounded-md bg-muted shrink-0">
                         <Inbox className="w-4 h-4 text-muted-foreground" />
                       </div>
-                      <span className="flex-1 truncate text-sm font-medium">Sin carpeta</span>
+                      <span className="flex-1 truncate text-sm font-medium">No folder</span>
                       <span className="text-xs text-muted-foreground">{unfiledCount}</span>
                     </div>
 
@@ -965,7 +1256,7 @@ export function ArchiveContent() {
                   <Card className="glass-card p-6 text-center">
                     <Folder className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
                     <h3 className="text-lg font-semibold mb-2">
-                      {selectedFolderId ? "Carpeta vacía" : "Sin elementos guardados"}
+                      {selectedFolderId ? "Folder is empty" : "No saved items"}
                     </h3>
                     <p className="text-muted-foreground">
                       {searchQuery 
@@ -1019,8 +1310,25 @@ export function ArchiveContent() {
           content={selectedArticle}
           isOpen={!!selectedArticle}
           onClose={handleCloseViewer}
+          onNavigateNext={handleNavigateNext}
+          onNavigatePrevious={handleNavigatePrevious}
+          hasNext={hasNext}
+          hasPrevious={hasPrevious}
         />
       )}
+
+      {/* Podcast Viewer Modal */}
+      <PodcastViewer
+        isOpen={isPodcastViewerOpen}
+        onClose={handleClosePodcastViewer}
+        episode={currentPodcastEpisode}
+        episodes={podcastEpisodes}
+        source={currentPodcastEpisode?.source}
+        onNavigateNext={handleNavigateNext}
+        onNavigatePrevious={handleNavigatePrevious}
+        hasNext={hasNext}
+        hasPrevious={hasPrevious}
+      />
 
       {/* Dialog para confirmar eliminación de carpeta */}
       <Dialog open={!!deletingFolder} onOpenChange={(open) => !open && setDeletingFolder(null)}>

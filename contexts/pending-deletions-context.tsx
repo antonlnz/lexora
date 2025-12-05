@@ -42,11 +42,18 @@ export function PendingDeletionsProvider({ children }: { children: React.ReactNo
   const [pendingDeletions, setPendingDeletions] = useState<PendingDeletion[]>([])
   // Usar un Set de callbacks para permitir múltiples listeners
   const sourceRestoredCallbacks = useRef<Set<SourceRestoredCallback>>(new Set())
+  // Ref para mantener la lista actualizada en los timeouts
+  const pendingDeletionsRef = useRef<PendingDeletion[]>([])
+  
+  // Mantener la ref sincronizada con el estado
+  useEffect(() => {
+    pendingDeletionsRef.current = pendingDeletions
+  }, [pendingDeletions])
 
   // Limpiar timeouts al desmontar
   useEffect(() => {
     return () => {
-      pendingDeletions.forEach(pd => clearTimeout(pd.timeoutId))
+      pendingDeletionsRef.current.forEach(pd => clearTimeout(pd.timeoutId))
     }
   }, [])
 
@@ -61,34 +68,25 @@ export function PendingDeletionsProvider({ children }: { children: React.ReactNo
     })
   }, [])
 
-  const executeDeletion = useCallback(async (deletion: PendingDeletion) => {
-    console.log(`[PendingDeletions] Executing deletion for ${deletion.source.id}`)
-    try {
-      await sourceService.deleteSourceCompletely(deletion.source.id, deletion.deleteSavedContent)
-      console.log(`[PendingDeletions] Successfully deleted source ${deletion.source.id}`)
-    } catch (error) {
-      console.error(`[PendingDeletions] Error deleting source:`, error)
-      toast.error("Error al eliminar fuente")
-      // Restaurar la fuente si falla
-      notifySourceRestored(deletion.source)
-    } finally {
-      // Remover de la lista de pendientes
-      setPendingDeletions(prev => prev.filter(pd => pd.id !== deletion.id))
-    }
-  }, [notifySourceRestored])
-
   const addPendingDeletion = useCallback((source: SourceWithUserData, deleteSavedContent: boolean) => {
     const id = `${source.id}-${Date.now()}`
     
-    const timeoutId = setTimeout(() => {
-      // Buscar la eliminación en el estado actual
-      setPendingDeletions(prev => {
-        const deletion = prev.find(pd => pd.id === id)
-        if (deletion) {
-          executeDeletion(deletion)
+    const timeoutId = setTimeout(async () => {
+      // Buscar la eliminación en la ref (siempre actualizada)
+      const deletion = pendingDeletionsRef.current.find(pd => pd.id === id)
+      if (deletion) {
+        // Ejecutar la eliminación
+        try {
+          await sourceService.deleteSourceCompletely(deletion.source.id, deletion.deleteSavedContent)
+        } catch (error) {
+          console.error('[PendingDeletions] Error deleting source:', error)
+          toast.error("Error al eliminar fuente")
+          // Restaurar la fuente si falla
+          notifySourceRestored(deletion.source)
         }
-        return prev
-      })
+        // Remover de la lista de pendientes
+        setPendingDeletions(prev => prev.filter(pd => pd.id !== id))
+      }
     }, DELETION_TIMEOUT)
 
     const newDeletion: PendingDeletion = {
@@ -106,7 +104,7 @@ export function PendingDeletionsProvider({ children }: { children: React.ReactNo
         ? "Fuente y contenido guardado eliminados" 
         : "Fuente eliminada"
     )
-  }, [executeDeletion])
+  }, [notifySourceRestored])
 
   const undoDeletion = useCallback((id: string) => {
     // Encontrar la eliminación primero (fuera del setState)
@@ -156,7 +154,10 @@ function PendingDeletionsWidget() {
   if (pendingDeletions.length === 0) return null
 
   return (
-    <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3">
+    <div 
+      className="fixed right-6 z-50 flex flex-col gap-3"
+      style={{ bottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}
+    >
       {pendingDeletions.map((deletion, index) => (
         <div 
           key={deletion.id}

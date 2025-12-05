@@ -96,7 +96,7 @@ function SheetContent({
           side === 'top' &&
             'data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:duration-500 transition ease-in-out inset-x-0 top-0 h-auto border-b',
           !isBottomSheet && 'gap-4',
-          isBottomSheet && 'inset-x-0 bottom-0 h-auto border-t',
+          isBottomSheet && 'inset-x-0 bottom-0 h-auto border-t pb-[env(safe-area-inset-bottom)]',
           className,
         )}
         asChild={isBottomSheet}

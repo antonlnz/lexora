@@ -560,6 +560,32 @@ ${sources.map(source => {
   )
 }
 
+// Componente para el icono de la fuente con fallback
+function SourceIcon({ source }: { source: Source }) {
+  const [imageError, setImageError] = useState(false)
+  const IconComponent = getSourceTypeIcon(source.source_type as SourceType)
+  const typeColorClass = getSourceTypeColor(source.source_type as SourceType)
+
+  if (source.favicon_url && !imageError) {
+    return (
+      <div className="w-10 h-10 rounded-full overflow-hidden bg-muted shrink-0 flex items-center justify-center">
+        <img 
+          src={source.favicon_url} 
+          alt="" 
+          className="w-full h-full object-cover"
+          onError={() => setImageError(true)}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className={`p-2 rounded-lg ${typeColorClass} shrink-0`}>
+      <IconComponent className="h-5 w-5" />
+    </div>
+  )
+}
+
 interface SourcesListProps {
   sources: Source[]
   onToggle: (id: string) => void
@@ -598,24 +624,7 @@ function SourcesList({ sources, onToggle, onDelete, onSelect, selectedId, onUpda
               onClick={() => onSelect(isSelected ? null! : source)}
             >
               <div className="flex items-start gap-3">
-                {source.favicon_url ? (
-                  <div className="w-10 h-10 rounded-full overflow-hidden bg-muted shrink-0 flex items-center justify-center">
-                    <img 
-                      src={source.favicon_url} 
-                      alt="" 
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        // Fallback to icon on error
-                        e.currentTarget.parentElement!.innerHTML = ''
-                        e.currentTarget.parentElement!.className = `p-2 rounded-lg ${typeColorClass} shrink-0`
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <div className={`p-2 rounded-lg ${typeColorClass} shrink-0`}>
-                    <IconComponent className="h-5 w-5" />
-                  </div>
-                )}
+                <SourceIcon source={source} />
 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1 flex-wrap">

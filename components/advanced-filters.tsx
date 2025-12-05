@@ -369,6 +369,15 @@ export function AdvancedFilters({ filters, onFiltersChange, availableSources, av
 
             {filters.sources.map((sourceId) => {
               const source = availableSources.find((s) => s.id === sourceId)
+              // No mostrar el badge si las fuentes aún no se han cargado (mostraría el ID)
+              if (!source && availableSources.length === 0) {
+                return (
+                  <Badge key={sourceId} variant="secondary" className="glass hover-lift-subtle animate-pulse">
+                    <User className="h-3 w-3 mr-1" />
+                    <span className="w-16 h-3 bg-muted-foreground/20 rounded" />
+                  </Badge>
+                )
+              }
               return (
                 <Badge key={sourceId} variant="secondary" className="glass hover-lift-subtle">
                   <User className="h-3 w-3 mr-1" />

@@ -96,12 +96,14 @@ function getYouTubeVideoId(url: string | null | undefined): string | null {
 // Helper function to normalize article data from database
 function normalizeContent(article: ContentWithMetadata) {
   // Determinar el autor según el tipo de contenido
-  // Para YouTube el campo es channel_name, para RSS es author
+  // Para YouTube el campo es channel_name, para RSS es author, para podcast es author
   const sourceType = article.source.source_type
   let author = 'Unknown'
   if (sourceType === 'youtube_channel' || sourceType === 'youtube_video') {
     // Para YouTube, el campo channel_name está en el artículo
     author = (article as any).channel_name || 'Unknown'
+  } else if (sourceType === 'podcast') {
+    author = (article as any).author || article.source.title || 'Unknown'
   } else {
     author = (article as any).author || 'Unknown'
   }
@@ -141,6 +143,13 @@ function normalizeContent(article: ContentWithMetadata) {
     likeCount: (article as any).like_count || null,
     mediaType: (article as any).featured_media_type,
     isYouTube: sourceType === 'youtube_channel' || sourceType === 'youtube_video',
+    isPodcast: sourceType === 'podcast',
+    // Campos específicos de podcast
+    audioUrl: (article as any).audio_url || null,
+    showNotes: (article as any).show_notes || null,
+    episodeNumber: (article as any).episode_number || null,
+    seasonNumber: (article as any).season_number || null,
+    duration: (article as any).duration || null,
   }
 }
 
@@ -283,13 +292,26 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
     }
   }, [isOpen, cardPosition])
 
+  // Solo sincronizar estado cuando cambia el contenido (diferente ID)
+  const previousContentIdRef = useRef<string | null>(null)
   useEffect(() => {
-    if (normalizedContent) {
+    if (normalizedContent && normalizedContent.id !== previousContentIdRef.current) {
+      previousContentIdRef.current = normalizedContent.id
       setIsSaved(normalizedContent.isSaved)
       setCurrentFolderId(normalizedContent.folderId)
       // Resetear estado de orientación cuando cambia el contenido
       setMediaAspectRatio(null)
       setIsMediaVertical(false)
+      // Resetear scroll al principio cuando cambia el contenido
+      if (contentRef.current) {
+        contentRef.current.scrollTop = 0
+      }
+      // Resetear estado de video
+      setIsVideoPlaying(false)
+      setShouldFloatVideo(false)
+      setShowPlayButton(true)
+      setCurrentVideoTime(0)
+      setReadingProgress(0)
     }
   }, [normalizedContent])
 
@@ -440,10 +462,7 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
     if (!content) return
     setSavingToFolder(true)
     try {
-      const contentType = content.source.source_type === 'youtube_channel' || content.source.source_type === 'youtube_video' 
-        ? 'youtube' 
-        : 'rss'
-      await contentService.archiveToFolder(contentType, content.id, folderId)
+      await contentService.archiveToFolder(content.content_type, content.id, folderId)
       setIsSaved(true)
       setCurrentFolderId(folderId)
     } catch (error) {
@@ -458,10 +477,8 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
     if (!content) return
     if (isSaved) {
       try {
-        const contentType = content.source.source_type === 'youtube_channel' || content.source.source_type === 'youtube_video' 
-          ? 'youtube' 
-          : 'rss'
-        await contentService.toggleArchive(contentType, content.id, false)
+        // Usar content.content_type que ya tiene el tipo correcto
+        await contentService.toggleArchive(content.content_type, content.id, false)
         setIsSaved(false)
         setCurrentFolderId(null)
       } catch (error) {
@@ -808,10 +825,11 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
               <AmbientBackground imageUrl={normalizedContent.image} isActive={isPlaying} intensity={0.3} />
             ) : null}
 
-            {/* Close Button - Always visible in top left corner */}
+            {/* Close Button - Always visible in top left corner, respetando safe area */}
             <motion.button
               onClick={onClose}
-              className="fixed top-4 left-4 z-30 w-10 h-10 rounded-full bg-white/90 backdrop-blur-sm shadow-lg flex items-center justify-center hover:bg-white transition-colors"
+              className="fixed left-4 z-30 w-10 h-10 rounded-full bg-white/90 backdrop-blur-sm shadow-lg flex items-center justify-center hover:bg-white transition-colors"
+              style={{ top: 'calc(env(safe-area-inset-top, 0px) + 16px)' }}
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.8 }}
@@ -933,7 +951,7 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
                     {/* Contenido scrollable: metadata + descripción */}
                     <div 
                       ref={contentRef}
-                      className="flex-1 overflow-y-auto px-4 pb-32 select-text"
+                      className="flex-1 overflow-y-auto overflow-x-hidden px-4 pb-32 select-text"
                     >
                       <article
                         className="mx-auto transition-all duration-300 select-text pt-6"
@@ -1019,7 +1037,7 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
               return (
                 <motion.div
                   ref={contentRef}
-                  className="h-full overflow-y-auto pt-16 pb-32 px-4 select-text"
+                  className="h-full overflow-y-auto overflow-x-hidden pt-16 pb-32 px-4 select-text"
                   style={{
                     color: isDarkMode ? "#ffffff" : textColor,
                   }}
@@ -1038,7 +1056,7 @@ export function ContentViewer({ content, isOpen, onClose, cardPosition, onNaviga
                   >
                     {/* Article Header */}
                     <header className="mb-8">
-                      <h1 className="text-4xl font-bold mb-4 text-balance leading-tight">{normalizedContent.title}</h1>
+                      <h1 className="text-2xl md:text-4xl font-bold mb-4 text-balance leading-tight">{normalizedContent.title}</h1>
 
                       <div className="flex items-center gap-2 mb-4">
                         <TypeBadge sourceType={normalizedContent.type as SourceType} />

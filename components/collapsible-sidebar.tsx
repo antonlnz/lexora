@@ -106,7 +106,7 @@ export function CollapsibleSidebar() {
             setDragX(0)
             setIsDragging(false)
           }}
-          className="fixed left-0 top-0 h-full w-12 z-30 lg:hidden"
+          className="fixed left-0 top-[calc(4rem+env(safe-area-inset-top))] h-[calc(100vh-4rem-env(safe-area-inset-top))] w-12 z-30 lg:hidden"
           style={{
             touchAction: "pan-y", // Permite scroll vertical
           }}
@@ -151,7 +151,7 @@ export function CollapsibleSidebar() {
           setDragX(0)
           setIsDragging(false)
         }}
-        className={`fixed left-0 top-16 h-[calc(100vh-4rem)] w-80 z-50 ${isMobile ? "" : "lg:block"}`}
+        className={`fixed left-0 top-[calc(4rem+env(safe-area-inset-top))] h-[calc(100vh-4rem-env(safe-area-inset-top))] w-80 z-50 ${isMobile ? "" : "lg:block"}`}
         style={{
           touchAction: "none",
         }}

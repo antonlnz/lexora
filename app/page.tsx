@@ -12,7 +12,7 @@ export default function HomePage() {
       <div className="min-h-screen bg-background">
         <Navigation />
 
-        <div className="pt-16">
+        <div className="pt-nav">
           <CollapsibleSidebar />
 
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

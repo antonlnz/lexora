@@ -1,10 +1,11 @@
 "use client"
 
-import { useState, useMemo, useEffect } from "react"
+import { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import { useSearchParams, useRouter, usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { ContentCard } from "@/components/content-card"
 import { ContentViewer } from "@/components/content-viewer"
+import { PodcastViewer } from "@/components/podcast-viewer"
 import { AdvancedFilters, type FilterState } from "@/components/advanced-filters"
 import { AddSourceDialog } from "@/components/add-source-dialog"
 import { LayoutGrid, List, RefreshCw, Loader2, Plus } from "lucide-react"
@@ -12,8 +13,11 @@ import { useInfiniteScroll } from "@/hooks/use-infinite-scroll"
 import { usePullToLoad } from "@/hooks/use-pull-to-load"
 import { useSubscription } from "@/contexts/subscription-context"
 import { useAuth } from "@/contexts/auth-context"
+import { usePodcastPlayer, type PodcastEpisode } from "@/contexts/podcast-player-context"
+import { usePendingDeletions } from "@/contexts/pending-deletions-context"
 import { contentService, type ContentWithMetadata } from "@/lib/services/content-service"
 import { sourceService, type SourceWithUserData } from "@/lib/services/source-service"
+import { generateContentSlug, parseContentSlug } from "@/lib/utils/content-slug"
 
 export function ContentFeed() {
   const { isAuthenticated, isLoading: authLoading } = useAuth()
@@ -91,6 +95,66 @@ export function ContentFeed() {
   const [viewerContent, setViewerContent] = useState<any>(null)
   const [isViewerOpen, setIsViewerOpen] = useState(false)
   const [cardPosition, setCardPosition] = useState<DOMRect | null>(null)
+  
+  // Estado para el podcast viewer
+  const [isPodcastViewerOpen, setIsPodcastViewerOpen] = useState(false)
+  const [currentPodcastEpisode, setCurrentPodcastEpisode] = useState<PodcastEpisode | null>(null)
+  const [podcastEpisodes, setPodcastEpisodes] = useState<PodcastEpisode[]>([])
+  
+  // Ref para rastrear si estamos abriendo desde URL (evitar bucles)
+  const isOpeningFromUrl = useRef(false)
+  // Ref para rastrear si ya procesamos la URL inicial
+  const hasProcessedInitialUrl = useRef(false)
+
+  // Hook del podcast player para detectar cuando se quiere maximizar
+  const { shouldOpenViewer, clearShouldOpenViewer, currentEpisode } = usePodcastPlayer()
+  
+  // Hook para obtener las eliminaciones pendientes
+  const { pendingDeletions } = usePendingDeletions()
+  
+  // IDs de fuentes pendientes de eliminación
+  const pendingDeletionSourceIds = useMemo(() => 
+    new Set(pendingDeletions.map(pd => pd.source.id)),
+    [pendingDeletions]
+  )
+
+  // Abrir el podcast viewer cuando se maximiza desde el mini player
+  useEffect(() => {
+    if (shouldOpenViewer && currentEpisode) {
+      setCurrentPodcastEpisode(currentEpisode)
+      
+      // Cargar episodios del mismo podcast si aún no están cargados
+      if (articles.length > 0 && currentEpisode.source_id) {
+        const allPodcastEpisodes = articles
+          .filter(a => a.source_id === currentEpisode.source_id && a.source.source_type === 'podcast')
+          .map(a => ({
+            id: a.id,
+            source_id: a.source_id,
+            title: a.title,
+            url: a.url,
+            author: (a as any).author || null,
+            published_at: a.published_at || null,
+            description: (a as any).description || null,
+            show_notes: (a as any).show_notes || null,
+            audio_url: (a as any).audio_url,
+            image_url: (a as any).image_url || null,
+            duration: (a as any).duration || null,
+            episode_number: (a as any).episode_number || null,
+            season_number: (a as any).season_number || null,
+            created_at: (a as any).created_at || new Date().toISOString(),
+            updated_at: (a as any).updated_at || new Date().toISOString(),
+            source: a.source,
+          })) as PodcastEpisode[]
+        
+        if (allPodcastEpisodes.length > 0) {
+          setPodcastEpisodes(allPodcastEpisodes)
+        }
+      }
+      
+      setIsPodcastViewerOpen(true)
+      clearShouldOpenViewer()
+    }
+  }, [shouldOpenViewer, currentEpisode, articles, clearShouldOpenViewer])
 
   const [isAddSourceOpen, setIsAddSourceOpen] = useState(false)
   const { canAddSource, getSourceLimit } = useSubscription()
@@ -328,43 +392,198 @@ export function ContentFeed() {
     isLoading: isSyncingOlder
   })
 
-  const handleOpenViewer = (content: any, cardElement: HTMLElement) => {
-    const rect = cardElement.getBoundingClientRect()
-    setCardPosition(rect)
-    setViewerContent(content)
-    setIsViewerOpen(true)
+  // Helper para determinar si un contenido debe usar PodcastViewer
+  const shouldUsePodcastViewer = (content: ContentWithMetadata): boolean => {
+    const sourceType = content.source.source_type
+    return sourceType === 'podcast' || sourceType === 'youtube_channel' || sourceType === 'youtube_video'
   }
 
+  // Helper para abrir el visor correcto según el tipo de contenido
+  const openCorrectViewer = useCallback((content: ContentWithMetadata) => {
+    // Actualizar URL solo si no estamos abriendo desde URL
+    if (!isOpeningFromUrl.current) {
+      const slug = generateContentSlug(content.id, content.title)
+      const params = new URLSearchParams(searchParams.toString())
+      params.set('viewer', slug)
+      router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+    }
+    
+    if (shouldUsePodcastViewer(content)) {
+      // Cerrar ContentViewer si está abierto
+      if (isViewerOpen) {
+        setIsViewerOpen(false)
+        setViewerContent(null)
+      }
+      
+      // Convertir a PodcastEpisode
+      const isYouTube = content.source.source_type === 'youtube_channel' || content.source.source_type === 'youtube_video'
+      const episode: PodcastEpisode = {
+        id: content.id,
+        source_id: content.source_id,
+        title: content.title,
+        url: content.url,
+        author: (content as any).author || (content as any).channel_name || null,
+        published_at: content.published_at || null,
+        description: (content as any).description || null,
+        show_notes: (content as any).show_notes || null,
+        audio_url: isYouTube ? content.url : (content as any).audio_url,
+        image_url: (content as any).image_url || null,
+        duration: (content as any).duration || null,
+        episode_number: (content as any).episode_number || null,
+        season_number: (content as any).season_number || null,
+        created_at: (content as any).created_at || new Date().toISOString(),
+        updated_at: (content as any).updated_at || new Date().toISOString(),
+        source: content.source,
+      }
+      
+      // Obtener todos los episodios del mismo tipo de source
+      const allEpisodes = articles
+        .filter(a => a.source_id === content.source_id && shouldUsePodcastViewer(a))
+        .map(a => {
+          const aIsYouTube = a.source.source_type === 'youtube_channel' || a.source.source_type === 'youtube_video'
+          return {
+            id: a.id,
+            source_id: a.source_id,
+            title: a.title,
+            url: a.url,
+            author: (a as any).author || (a as any).channel_name || null,
+            published_at: a.published_at || null,
+            description: (a as any).description || null,
+            show_notes: (a as any).show_notes || null,
+            audio_url: aIsYouTube ? a.url : (a as any).audio_url,
+            image_url: (a as any).image_url || null,
+            duration: (a as any).duration || null,
+            episode_number: (a as any).episode_number || null,
+            season_number: (a as any).season_number || null,
+            created_at: (a as any).created_at || new Date().toISOString(),
+            updated_at: (a as any).updated_at || new Date().toISOString(),
+            source: a.source,
+          }
+        }) as PodcastEpisode[]
+      
+      setCurrentPodcastEpisode(episode)
+      setPodcastEpisodes(allEpisodes)
+      setIsPodcastViewerOpen(true)
+    } else {
+      // Cerrar PodcastViewer si está abierto
+      if (isPodcastViewerOpen) {
+        setIsPodcastViewerOpen(false)
+      }
+      
+      // Usar ContentViewer
+      setViewerContent(content)
+      setIsViewerOpen(true)
+    }
+  }, [articles, isViewerOpen, isPodcastViewerOpen, searchParams, pathname, router])
+
+  const handleOpenViewer = (content: ContentWithMetadata, cardElement: HTMLElement) => {
+    const rect = cardElement.getBoundingClientRect()
+    setCardPosition(rect)
+    openCorrectViewer(content)
+  }
+  
+  // Función para limpiar URL al cerrar visor
+  const clearViewerUrl = useCallback(() => {
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('viewer')
+    const newUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname
+    router.replace(newUrl, { scroll: false })
+  }, [searchParams, pathname, router])
+
   const handleCloseViewer = () => {
+    clearViewerUrl()
     setIsViewerOpen(false)
     setTimeout(() => {
       setViewerContent(null)
       setCardPosition(null)
     }, 300)
   }
+  
+  const handleClosePodcastViewer = () => {
+    clearViewerUrl()
+    setIsPodcastViewerOpen(false)
+    // No limpiar el episodio inmediatamente para permitir mini player
+  }
+
+  // Efecto para abrir visor desde URL al cargar contenido
+  useEffect(() => {
+    // Solo procesar si tenemos artículos y no hemos procesado ya la URL inicial
+    if (articles.length === 0 || hasProcessedInitialUrl.current) return
+    
+    const viewerParam = searchParams.get('viewer')
+    if (!viewerParam) {
+      hasProcessedInitialUrl.current = true
+      return
+    }
+    
+    const contentId = parseContentSlug(viewerParam)
+    if (!contentId) {
+      hasProcessedInitialUrl.current = true
+      return
+    }
+    
+    // Buscar el contenido por ID
+    const content = articles.find(a => a.id === contentId)
+    if (content) {
+      // Marcar que estamos abriendo desde URL para evitar actualizar la URL de nuevo
+      isOpeningFromUrl.current = true
+      openCorrectViewer(content)
+      isOpeningFromUrl.current = false
+    }
+    
+    hasProcessedInitialUrl.current = true
+  }, [articles, searchParams, openCorrectViewer])
+
+  // Efecto para cerrar visor cuando el parámetro viewer desaparece de la URL (navegación hacia atrás)
+  useEffect(() => {
+    const viewerParam = searchParams.get('viewer')
+    
+    // Si no hay parámetro viewer y algún visor está abierto, cerrarlo
+    if (!viewerParam && (isViewerOpen || isPodcastViewerOpen)) {
+      if (isViewerOpen) {
+        setIsViewerOpen(false)
+        setTimeout(() => {
+          setViewerContent(null)
+          setCardPosition(null)
+        }, 300)
+      }
+      if (isPodcastViewerOpen) {
+        setIsPodcastViewerOpen(false)
+      }
+    }
+  }, [searchParams, isViewerOpen, isPodcastViewerOpen])
 
   const handleNavigateNext = () => {
-    if (!viewerContent) return
-    const currentIndex = filteredAndSortedContent.findIndex((item) => item.id === viewerContent.id)
+    const currentContent = viewerContent || (isPodcastViewerOpen && currentPodcastEpisode ? 
+      filteredAndSortedContent.find(c => c.id === currentPodcastEpisode.id) : null)
+    if (!currentContent) return
+    
+    const currentIndex = filteredAndSortedContent.findIndex((item) => item.id === currentContent.id)
     if (currentIndex !== -1 && currentIndex < filteredAndSortedContent.length - 1) {
       const nextContent = filteredAndSortedContent[currentIndex + 1]
-      setViewerContent(nextContent)
-      setCardPosition(null) // No animar desde tarjeta al navegar
+      openCorrectViewer(nextContent)
     }
   }
 
   const handleNavigatePrevious = () => {
-    if (!viewerContent) return
-    const currentIndex = filteredAndSortedContent.findIndex((item) => item.id === viewerContent.id)
+    const currentContent = viewerContent || (isPodcastViewerOpen && currentPodcastEpisode ? 
+      filteredAndSortedContent.find(c => c.id === currentPodcastEpisode.id) : null)
+    if (!currentContent) return
+    
+    const currentIndex = filteredAndSortedContent.findIndex((item) => item.id === currentContent.id)
     if (currentIndex > 0) {
       const previousContent = filteredAndSortedContent[currentIndex - 1]
-      setViewerContent(previousContent)
-      setCardPosition(null) // No animar desde tarjeta al navegar
+      openCorrectViewer(previousContent)
     }
   }
 
   const filteredAndSortedContent = useMemo(() => {
     const filtered = articles.filter((article) => {
+      // Excluir contenido de fuentes pendientes de eliminación
+      if (pendingDeletionSourceIds.has(article.source_id)) {
+        return false
+      }
+      
       if (filters.search) {
         const searchTerm = filters.search.toLowerCase()
         // Acceso seguro a propiedades que pueden no existir en todos los tipos de contenido
@@ -433,13 +652,24 @@ export function ContentFeed() {
     })
 
     return filtered
-  }, [articles, filters])
+  }, [articles, filters, pendingDeletionSourceIds])
 
   const displayedContent = useMemo(() => {
     return filteredAndSortedContent.slice(0, displayedItems)
   }, [filteredAndSortedContent, displayedItems])
 
-  const currentIndex = viewerContent ? filteredAndSortedContent.findIndex((item) => item.id === viewerContent.id) : -1
+  // Calcular índice actual considerando ambos visores
+  const getCurrentIndex = () => {
+    if (viewerContent) {
+      return filteredAndSortedContent.findIndex((item) => item.id === viewerContent.id)
+    }
+    if (isPodcastViewerOpen && currentPodcastEpisode) {
+      return filteredAndSortedContent.findIndex((item) => item.id === currentPodcastEpisode.id)
+    }
+    return -1
+  }
+  
+  const currentIndex = getCurrentIndex()
   const hasNext = currentIndex !== -1 && currentIndex < filteredAndSortedContent.length - 1
   const hasPrevious = currentIndex > 0
 
@@ -462,12 +692,14 @@ export function ContentFeed() {
   })
 
   const availableSources = useMemo(() => {
-    return sources.map(source => ({
-      id: source.id,
-      title: source.title,
-      favicon_url: source.favicon_url
-    }))
-  }, [sources])
+    return sources
+      .filter(source => !pendingDeletionSourceIds.has(source.id))
+      .map(source => ({
+        id: source.id,
+        title: source.title,
+        favicon_url: source.favicon_url
+      }))
+  }, [sources, pendingDeletionSourceIds])
 
   const availableTags = useMemo(() => {
     // Tags aún no implementados en BD
@@ -644,9 +876,9 @@ export function ContentFeed() {
         </div>
       ) : (
         <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6" : "space-y-4"}>
-          {displayedContent.map((article) => (
+          {displayedContent.map((article, index) => (
             <ContentCard 
-              key={article.id} 
+              key={article.id && article.id.length > 0 ? `${article.content_type}-${article.id}` : `article-fallback-${index}`} 
               article={article} 
               viewMode={viewMode} 
               onOpenViewer={handleOpenViewer} 
@@ -760,6 +992,18 @@ export function ContentFeed() {
         isOpen={isViewerOpen}
         onClose={handleCloseViewer}
         cardPosition={cardPosition}
+        onNavigateNext={handleNavigateNext}
+        onNavigatePrevious={handleNavigatePrevious}
+        hasNext={hasNext}
+        hasPrevious={hasPrevious}
+      />
+
+      <PodcastViewer
+        isOpen={isPodcastViewerOpen}
+        onClose={handleClosePodcastViewer}
+        episode={currentPodcastEpisode}
+        episodes={podcastEpisodes}
+        source={currentPodcastEpisode?.source}
         onNavigateNext={handleNavigateNext}
         onNavigatePrevious={handleNavigatePrevious}
         hasNext={hasNext}

@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Youtube,
   Twitter,
@@ -32,13 +33,23 @@ import type { SourceType } from "@/types/database"
 import { 
   detectSourceType as detectSourceTypeFromUrl, 
   getYoutubeRssFeedUrl,
+  getYoutubeChannelInfo,
   isValidRssFeed,
+  getPodcastInfo,
 } from "@/lib/source-handlers/client"
 
 interface AddSourceDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onSourceAdded?: () => void
+}
+
+// Tipo para las playlists de podcast de YouTube
+interface PodcastPlaylist {
+  id: string
+  title: string
+  videoCount: number
+  feedUrl: string
 }
 
 // UI display types (simplified for user)
@@ -136,7 +147,32 @@ const urlPatterns = {
   tiktok: [/(?:tiktok\.com\/@)([\w.]+)/, /(?:vm\.tiktok\.com\/)([\w]+)/],
   twitter: [/(?:twitter\.com\/)([\w]+)/, /(?:x\.com\/)([\w]+)/],
   rss: [/\.rss$/, /\.xml$/, /\/feed\/?$/, /\/rss\/?$/],
-  podcast: [/podcast/i, /feeds\.feedburner\.com/, /anchor\.fm/],
+  podcast: [
+    // Spotify
+    /open\.spotify\.com\/show\//,
+    /spotify\.link\//,
+    // Apple Podcasts
+    /podcasts\.apple\.com\//,
+    /itunes\.apple\.com\/.*podcast/,
+    // Amazon Music / Audible
+    /music\.amazon\.[a-z.]+\/podcasts\//,
+    /audible\.[a-z.]+\/pd\//,
+    // iVoox
+    /ivoox\.com\//,
+    // Anchor
+    /anchor\.fm\//,
+    // Podbean
+    /podbean\.com\//,
+    // Pocket Casts
+    /pca\.st\//,
+    // Overcast
+    /overcast\.fm\//,
+    // Castro
+    /castro\.fm\//,
+    // General podcast patterns
+    /podcast/i,
+    /feeds\.feedburner\.com/,
+  ],
 }
 
 /**
@@ -148,14 +184,39 @@ function detectUISourceType(url: string): UISourceType | null {
     const u = new URL(url)
     const host = u.hostname.replace(/^www\./, '').toLowerCase()
     const path = (u.pathname + (u.search || '')).toLowerCase()
+    const fullUrl = host + path
+
+    // Detectar plataformas de podcast específicas primero
+    const podcastPlatforms = [
+      'open.spotify.com/show',
+      'spotify.link',
+      'podcasts.apple.com',
+      'itunes.apple.com',
+      'music.amazon.',
+      'audible.',
+      'ivoox.com',
+      'anchor.fm',
+      'podbean.com',
+      'pca.st',
+      'overcast.fm',
+      'castro.fm',
+    ]
+    
+    for (const platform of podcastPlatforms) {
+      if (fullUrl.includes(platform)) {
+        return 'podcast'
+      }
+    }
 
     // YouTube / youtu.be -> devolver "youtube" siempre para que el UI marque YouTube
     if (host.includes('youtube.com') || host === 'youtu.be') return 'youtube'
 
     // Comprobar patrones conocidos para otras redes
     for (const [type, patterns] of Object.entries(urlPatterns)) {
+      // Skip podcast ya que lo manejamos arriba con más precisión
+      if (type === 'podcast') continue
       for (const pattern of patterns) {
-        if (pattern.test(host + path)) return type as UISourceType
+        if (pattern.test(fullUrl)) return type as UISourceType
       }
     }
 
@@ -189,6 +250,7 @@ function normalizeUrlForComparison(url: string): string {
     // Normalizar: eliminar www, trailing slash, lowercase
     let normalized = u.hostname.replace(/^www\./, '').toLowerCase()
     normalized += u.pathname.replace(/\/$/, '').toLowerCase()
+    
     // Para YouTube RSS feeds, extraer el channel_id como clave única
     if (u.hostname.includes('youtube.com') && u.pathname.includes('/feeds/videos.xml')) {
       const channelId = u.searchParams.get('channel_id')
@@ -196,6 +258,39 @@ function normalizeUrlForComparison(url: string): string {
         return `youtube:${channelId}`
       }
     }
+    
+    // Para YouTube playlist feeds, extraer el playlist_id
+    if (u.hostname.includes('youtube.com') && u.pathname.includes('/feeds/videos.xml')) {
+      const playlistId = u.searchParams.get('playlist_id')
+      if (playlistId) {
+        return `youtube:playlist:${playlistId}`
+      }
+    }
+    
+    // Para URLs de canal de YouTube (@handle, /channel/, /c/), guardar el handle/ID normalizado
+    if (u.hostname.includes('youtube.com')) {
+      // @handle format
+      const handleMatch = u.pathname.match(/^\/@([^\/]+)/)
+      if (handleMatch) {
+        return `youtube:handle:${handleMatch[1].toLowerCase()}`
+      }
+      // /channel/ID format
+      const channelMatch = u.pathname.match(/^\/channel\/([^\/]+)/)
+      if (channelMatch) {
+        return `youtube:${channelMatch[1]}`
+      }
+      // /c/customname or /user/username format
+      const customMatch = u.pathname.match(/^\/(c|user)\/([^\/]+)/)
+      if (customMatch) {
+        return `youtube:custom:${customMatch[2].toLowerCase()}`
+      }
+      // /playlist?list=PLxxxx format
+      const playlistMatch = u.searchParams.get('list')
+      if (u.pathname.includes('/playlist') && playlistMatch) {
+        return `youtube:playlist:${playlistMatch}`
+      }
+    }
+    
     return normalized
   } catch {
     return url.toLowerCase()
@@ -277,6 +372,13 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
   const [isLoadingSources, setIsLoadingSources] = useState(false)
   const [existingSources, setExistingSources] = useState<string[]>([])
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null)
+  const [resolvedFeedUrl, setResolvedFeedUrl] = useState<string | null>(null)
+  
+  // Estado para YouTube con podcasts
+  const [youtubeHasPodcasts, setYoutubeHasPodcasts] = useState(false)
+  const [youtubePodcastPlaylists, setYoutubePodcastPlaylists] = useState<PodcastPlaylist[]>([])
+  const [selectedPodcastPlaylists, setSelectedPodcastPlaylists] = useState<string[]>([])
+  const [youtubeAddMode, setYoutubeAddMode] = useState<'youtube' | 'podcast' | 'both' | null>(null)
 
   // Cargar el número actual de fuentes cuando se abre el diálogo
   useEffect(() => {
@@ -315,8 +417,35 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
           // Detectar tipo de forma más inteligente
           let detectedType = detectUISourceType(url)
           
+          // Para plataformas de podcast (Spotify, Apple, etc.), obtener info del feed
+          if (detectedType === 'podcast') {
+            try {
+              const podcastInfo = await getPodcastInfo(url)
+              if (podcastInfo) {
+                setFormData((prev) => ({
+                  ...prev,
+                  name: podcastInfo.title || prev.name,
+                  description: podcastInfo.description || prev.description,
+                }))
+                if (podcastInfo.imageUrl) {
+                  setDetectedFaviconUrl(podcastInfo.imageUrl)
+                }
+                // Guardar el feed URL real para usarlo al guardar
+                if (podcastInfo.feedUrl) {
+                  setResolvedFeedUrl(podcastInfo.feedUrl)
+                  // Re-verificar duplicado con el feed URL real
+                  const duplicateFeed = checkDuplicate(podcastInfo.feedUrl, existingSources)
+                  if (duplicateFeed) {
+                    setDuplicateWarning(duplicateFeed)
+                  }
+                }
+              }
+            } catch (error) {
+              console.error('Error getting podcast info:', error)
+            }
+          }
           // Para URLs que parecen websites, verificar si realmente son RSS
-          if (detectedType === 'website' || detectedType === null) {
+          else if (detectedType === 'website' || detectedType === null) {
             try {
               const rssCheck = await isValidRssFeed(url)
               if (rssCheck.isRss) {
@@ -341,43 +470,79 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
             // Para YouTube, usar la detección asíncrona que obtiene el nombre real del canal
             if (detectedType === 'youtube') {
               try {
-                const result = await detectSourceTypeFromUrl(url)
-                if (result.suggestedTitle) {
-                  // Siempre actualizar el nombre cuando cambia la URL
-                  setFormData((prev) => ({ 
-                    ...prev, 
-                    name: result.suggestedTitle!,
-                    // También actualizar la descripción si existe
-                    description: result.suggestedDescription || prev.description 
-                  }))
-                }
-                // Guardar el favicon/avatar del canal si existe
-                if (result.faviconUrl) {
-                  setDetectedFaviconUrl(result.faviconUrl)
-                } else {
-                  setDetectedFaviconUrl(null)
-                }
-                // Verificar si hubo redirección (handle secundario)
-                if (result.wasRedirected) {
-                  setRedirectWarning({
-                    wasRedirected: true,
-                    originalHandle: result.originalHandle || null,
-                    finalHandle: result.finalHandle || null,
-                  })
-                } else {
-                  setRedirectWarning(null)
-                }
+                // Obtener información completa del canal, incluyendo detección de podcasts
+                const channelInfo = await getYoutubeChannelInfo(url)
                 
-                // Re-verificar duplicado con el RSS feed resuelto
-                const rssFeedUrl = await getYoutubeRssFeedUrl(url)
-                if (rssFeedUrl) {
-                  const duplicateRss = checkDuplicate(rssFeedUrl, existingSources)
-                  if (duplicateRss) {
-                    setDuplicateWarning(duplicateRss)
+                if (channelInfo) {
+                  // Actualizar nombre y descripción
+                  if (channelInfo.channelName) {
+                    setFormData((prev) => ({ 
+                      ...prev, 
+                      name: `YouTube - ${channelInfo.channelName}`,
+                      description: channelInfo.channelDescription || prev.description 
+                    }))
+                  }
+                  
+                  // Guardar el favicon/avatar del canal
+                  if (channelInfo.avatarUrl) {
+                    setDetectedFaviconUrl(channelInfo.avatarUrl)
+                  } else {
+                    setDetectedFaviconUrl(null)
+                  }
+                  
+                  // Verificar si hubo redirección
+                  if (channelInfo.wasRedirected) {
+                    setRedirectWarning({
+                      wasRedirected: true,
+                      originalHandle: channelInfo.originalHandle || null,
+                      finalHandle: channelInfo.finalHandle || null,
+                    })
+                  } else {
+                    setRedirectWarning(null)
+                  }
+                  
+                  // Verificar si el canal tiene podcasts
+                  const playlists = channelInfo.podcastPlaylists || []
+                  if (channelInfo.hasPodcasts && playlists.length > 0) {
+                    setYoutubeHasPodcasts(true)
+                    setYoutubePodcastPlaylists(playlists)
+                    // Si solo hay una playlist, seleccionarla automáticamente
+                    if (playlists.length === 1) {
+                      setSelectedPodcastPlaylists([playlists[0].id])
+                    } else {
+                      // Si hay múltiples, no seleccionar ninguna por defecto
+                      setSelectedPodcastPlaylists([])
+                    }
+                    // No seleccionar modo por defecto, dejar que el usuario elija
+                    setYoutubeAddMode(null)
+                  } else {
+                    setYoutubeHasPodcasts(false)
+                    setYoutubePodcastPlaylists([])
+                    setSelectedPodcastPlaylists([])
+                    setYoutubeAddMode(null)
+                  }
+                  
+                  // Re-verificar duplicado con el RSS feed resuelto
+                  if (channelInfo.feedUrl) {
+                    const duplicateRss = checkDuplicate(channelInfo.feedUrl, existingSources)
+                    if (duplicateRss) {
+                      setDuplicateWarning(duplicateRss)
+                    }
+                  }
+                  
+                  // También verificar duplicado para las URLs de podcast si existen
+                  if (playlists.length > 0) {
+                    for (const playlist of playlists) {
+                      const duplicatePodcast = checkDuplicate(playlist.feedUrl, existingSources)
+                      if (duplicatePodcast) {
+                        setDuplicateWarning(duplicatePodcast)
+                        break
+                      }
+                    }
                   }
                 }
               } catch (error) {
-                console.error('Error detecting YouTube channel name:', error)
+                console.error('Error detecting YouTube channel info:', error)
                 // Fallback al nombre extraído de la URL
                 const suggestedName = extractSourceName(url, detectedType)
                 if (suggestedName) {
@@ -385,6 +550,10 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
                 }
                 setDetectedFaviconUrl(null)
                 setRedirectWarning(null)
+                setYoutubeHasPodcasts(false)
+                setYoutubePodcastPlaylists([])
+                setSelectedPodcastPlaylists([])
+                setYoutubeAddMode(null)
               }
             } else if (detectedType !== 'rss' && detectedType !== 'podcast') {
               // Para otros tipos (no RSS/podcast que ya se manejaron arriba)
@@ -406,6 +575,11 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
       setDetectedFaviconUrl(null)
       setRedirectWarning(null)
       setDuplicateWarning(null)
+      setResolvedFeedUrl(null)
+      setYoutubeHasPodcasts(false)
+      setYoutubePodcastPlaylists([])
+      setSelectedPodcastPlaylists([])
+      setYoutubeAddMode(null)
       // Limpiar el nombre cuando se borra la URL
       setFormData((prev) => ({ ...prev, name: "" }))
     }
@@ -418,6 +592,11 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
     setDetectedFaviconUrl(null)
     setRedirectWarning(null)
     setDuplicateWarning(null)
+    setResolvedFeedUrl(null)
+    setYoutubeHasPodcasts(false)
+    setYoutubePodcastPlaylists([])
+    setSelectedPodcastPlaylists([])
+    setYoutubeAddMode(null)
     setFormData({
       name: "",
       description: "",
@@ -427,9 +606,35 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedType || !formData.name || !url || !urlValidation?.isValid) return
+    
+    // Si es YouTube con podcasts, verificar que se haya seleccionado un modo
+    if (selectedType === 'youtube' && youtubeHasPodcasts && !youtubeAddMode) {
+      toast.error("Selecciona cómo quieres añadir este canal", {
+        description: "Este canal tiene videos y podcasts. Elige qué quieres añadir.",
+      })
+      return
+    }
+    
+    // Si es modo podcast o both, verificar que hay playlists seleccionadas
+    if (selectedType === 'youtube' && youtubeHasPodcasts && 
+        (youtubeAddMode === 'podcast' || youtubeAddMode === 'both') && 
+        selectedPodcastPlaylists.length === 0) {
+      toast.error("Selecciona al menos una playlist de podcast", {
+        description: "Elige qué playlists de podcast quieres añadir.",
+      })
+      return
+    }
 
     // Verificar límite del plan antes de añadir
-    if (!canAddSource(userSourcesCount)) {
+    // Calcular cuántas fuentes se van a añadir
+    let sourcesToAdd = 1
+    if (youtubeAddMode === 'podcast') {
+      sourcesToAdd = selectedPodcastPlaylists.length
+    } else if (youtubeAddMode === 'both') {
+      sourcesToAdd = 1 + selectedPodcastPlaylists.length // 1 YouTube + N podcasts
+    }
+    
+    if (!canAddSource(userSourcesCount + sourcesToAdd - 1)) {
       const sourceLimit = getSourceLimit()
       toast.error("Límite de fuentes alcanzado", {
         description: `Has alcanzado el límite de ${sourceLimit} fuentes para tu plan ${currentPlan}. Actualiza tu plan para añadir más fuentes.`,
@@ -440,37 +645,127 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
     setIsSubmitting(true)
 
     try {
-      let urlToSave = url
+      // Determinar qué fuentes crear basándose en youtubeAddMode
+      const sourcesToCreate: Array<{
+        type: 'youtube' | 'podcast'
+        urlToSave: string
+        name: string
+        dbType: SourceType
+      }> = []
+
       if (selectedType === "youtube") {
-        const rss = await getYoutubeRssFeedUrl(url)
-        console.log("Resolved YouTube RSS URL:", rss)
-        if (rss) {
-          urlToSave = rss
+        const rssUrl = await getYoutubeRssFeedUrl(url)
+        
+        if (youtubeHasPodcasts && youtubeAddMode === 'podcast') {
+          // Solo añadir playlists de podcast seleccionadas
+          for (const playlistId of selectedPodcastPlaylists) {
+            const playlist = youtubePodcastPlaylists.find(p => p.id === playlistId)
+            if (playlist) {
+              sourcesToCreate.push({
+                type: 'podcast',
+                urlToSave: playlist.feedUrl,
+                name: `Podcast - ${playlist.title}`,
+                dbType: 'podcast',
+              })
+            }
+          }
+        } else if (youtubeHasPodcasts && youtubeAddMode === 'both') {
+          // Añadir ambos: canal de YouTube completo y playlists de podcasts seleccionadas
+          // 1. Canal de YouTube normal → youtube_content
+          sourcesToCreate.push({
+            type: 'youtube',
+            urlToSave: rssUrl || url,
+            name: formData.name,
+            dbType: 'youtube_channel',
+          })
+          // 2. Playlists de podcasts seleccionadas → podcast_content
+          for (const playlistId of selectedPodcastPlaylists) {
+            const playlist = youtubePodcastPlaylists.find(p => p.id === playlistId)
+            if (playlist) {
+              sourcesToCreate.push({
+                type: 'podcast',
+                urlToSave: playlist.feedUrl,
+                name: `Podcast - ${playlist.title}`,
+                dbType: 'podcast',
+              })
+            }
+          }
         } else {
-          // si no se pudo resolver en cliente, opcional: llamar a un endpoint server-side
+          // YouTube normal (sin podcasts o eligió solo videos)
+          sourcesToCreate.push({
+            type: 'youtube',
+            urlToSave: rssUrl || url,
+            name: formData.name,
+            dbType: 'youtube_channel',
+          })
+        }
+      } else if (selectedType === "podcast" && resolvedFeedUrl) {
+        // Podcast normal (no YouTube) - solo feeds con audio real
+        sourcesToCreate.push({
+          type: 'podcast',
+          urlToSave: resolvedFeedUrl,
+          name: formData.name,
+          dbType: 'podcast',
+        })
+      } else {
+        // Otros tipos
+        sourcesToCreate.push({
+          type: selectedType as 'youtube' | 'podcast',
+          urlToSave: url,
+          name: formData.name,
+          dbType: mapUITypeToDBType(selectedType, url),
+        })
+      }
+
+      // Obtener favicon
+      const faviconUrl = detectedFaviconUrl || await fetchFaviconUrl(url)
+
+      // Crear todas las fuentes
+      const createdSources = []
+      for (const source of sourcesToCreate) {
+        
+        const newSource = await sourceService.createOrSubscribeToSource({
+          title: source.name,
+          url: source.urlToSave,
+          description: formData.description || null,
+          favicon_url: faviconUrl,
+          source_type: source.dbType,
+        })
+
+        if (newSource) {
+          createdSources.push(newSource)
+          
+          // Sincronizar el contenido de la nueva fuente inmediatamente
+          try {
+            const syncResponse = await fetch('/api/feeds/refresh', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ sourceId: newSource.id }),
+            })
+            
+            if (syncResponse.ok) {
+              const syncResult = await syncResponse.json()
+            } else {
+              console.error("Error syncing new source:", syncResponse.status)
+            }
+          } catch (syncError) {
+            console.error("Error syncing new source:", syncError)
+          }
         }
       }
 
-      // Obtener favicon - usar el detectado para YouTube, o Google Favicon Service para otros
-      const faviconUrl = detectedFaviconUrl || await fetchFaviconUrl(url)
-
-      // Map UI type to database type
-      const dbType = mapUITypeToDBType(selectedType, url)
-
-      // Crear o suscribirse a fuente en Supabase
-      // Usar urlToSave (URL transformada para YouTube) en lugar de url original
-      await sourceService.createOrSubscribeToSource({
-        title: formData.name,
-        url: urlToSave,
-        description: formData.description || null,
-        favicon_url: faviconUrl,
-        source_type: dbType,
-      })
-
       // Mostrar toast de éxito
-      toast.success("Fuente añadida", {
-        description: `${formData.name} ha sido añadida exitosamente`,
-      })
+      if (createdSources.length > 1) {
+        toast.success("Fuentes añadidas", {
+          description: `Se han añadido ${createdSources.length} fuentes: videos y podcasts`,
+        })
+      } else {
+        toast.success("Fuente añadida", {
+          description: `${formData.name} ha sido añadida exitosamente`,
+        })
+      }
 
       // Resetear formulario
       handleReset()
@@ -609,6 +904,127 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
           </div>
         )}
 
+        {/* Selector de modo para YouTube con podcasts */}
+        {selectedType === 'youtube' && youtubeHasPodcasts && (
+          <div className="p-4 rounded-lg border-2 border-violet-500/50 bg-violet-500/10">
+            <div className="space-y-3">
+              <div className="flex items-start gap-3">
+                <Headphones className="h-5 w-5 shrink-0 mt-0.5 text-violet-600" />
+                <div className="flex-1">
+                  <h3 className="font-semibold mb-1 text-violet-800 dark:text-violet-200">
+                    Este canal tiene podcasts
+                  </h3>
+                  <p className="text-sm text-violet-700 dark:text-violet-300 mb-3">
+                    Elige cómo quieres añadir este canal a tu biblioteca:
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-2">
+                <Card
+                  className={`p-3 cursor-pointer transition-all ${
+                    youtubeAddMode === 'youtube' 
+                      ? 'border-2 border-red-500 bg-red-500/10' 
+                      : 'hover:border-red-500/50'
+                  }`}
+                  onClick={() => setYoutubeAddMode('youtube')}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-red-500/10">
+                      <Youtube className="h-4 w-4 text-red-600" />
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="font-medium text-sm">Solo vídeos</h4>
+                      <p className="text-xs text-muted-foreground">Añadir solo los vídeos del canal</p>
+                    </div>
+                    {youtubeAddMode === 'youtube' && <CheckCircle className="h-5 w-5 text-red-600" />}
+                  </div>
+                </Card>
+                <Card
+                  className={`p-3 cursor-pointer transition-all ${
+                    youtubeAddMode === 'podcast' 
+                      ? 'border-2 border-violet-500 bg-violet-500/10' 
+                      : 'hover:border-violet-500/50'
+                  }`}
+                  onClick={() => setYoutubeAddMode('podcast')}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-violet-500/10">
+                      <Headphones className="h-4 w-4 text-violet-600" />
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="font-medium text-sm">Solo playlist de podcasts</h4>
+                      <p className="text-xs text-muted-foreground">Solo los vídeos de la sección Podcasts</p>
+                    </div>
+                    {youtubeAddMode === 'podcast' && <CheckCircle className="h-5 w-5 text-violet-600" />}
+                  </div>
+                </Card>
+                <Card
+                  className={`p-3 cursor-pointer transition-all ${
+                    youtubeAddMode === 'both' 
+                      ? 'border-2 border-primary bg-primary/10' 
+                      : 'hover:border-primary/50'
+                  }`}
+                  onClick={() => setYoutubeAddMode('both')}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <Plus className="h-4 w-4 text-primary" />
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="font-medium text-sm">Ambos por separado</h4>
+                      <p className="text-xs text-muted-foreground">Canal completo + playlist de podcasts</p>
+                    </div>
+                    {youtubeAddMode === 'both' && <CheckCircle className="h-5 w-5 text-primary" />}
+                  </div>
+                </Card>
+              </div>
+              
+              {/* Selector de playlists cuando hay múltiples y se selecciona podcast o both */}
+              {(youtubeAddMode === 'podcast' || youtubeAddMode === 'both') && youtubePodcastPlaylists.length > 1 && (
+                <div className="mt-4 pt-4 border-t border-violet-500/30">
+                  <h4 className="font-medium text-sm mb-2 text-violet-800 dark:text-violet-200">
+                    Selecciona las playlists de podcast a añadir:
+                  </h4>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {youtubePodcastPlaylists.map((playlist) => (
+                      <label
+                        key={playlist.id}
+                        className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-all ${
+                          selectedPodcastPlaylists.includes(playlist.id)
+                            ? 'bg-violet-500/20 border border-violet-500'
+                            : 'bg-background/50 border border-transparent hover:border-violet-500/30'
+                        }`}
+                      >
+                        <Checkbox
+                          checked={selectedPodcastPlaylists.includes(playlist.id)}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setSelectedPodcastPlaylists([...selectedPodcastPlaylists, playlist.id])
+                            } else {
+                              setSelectedPodcastPlaylists(selectedPodcastPlaylists.filter(id => id !== playlist.id))
+                            }
+                          }}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-sm truncate">{playlist.title}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {playlist.videoCount > 0 ? `${playlist.videoCount} episodios` : 'Episodios disponibles'}
+                          </p>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                  {selectedPodcastPlaylists.length === 0 && (
+                    <p className="text-xs text-amber-600 mt-2">
+                      Selecciona al menos una playlist
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Advertencia de redirección de canal de YouTube */}
         {redirectWarning?.wasRedirected && (
           <div className="p-4 rounded-lg border-2 border-amber-500/50 bg-amber-500/10">
@@ -694,7 +1110,8 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
               !urlValidation?.isValid || 
               isSubmitting || 
               !canAddSource(userSourcesCount) ||
-              !!duplicateWarning
+              !!duplicateWarning ||
+              (selectedType === 'youtube' && youtubeHasPodcasts && !youtubeAddMode)
             }
           >
             {isSubmitting ? (
@@ -730,6 +1147,9 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
     setSelectedType,
     setFormData,
     redirectWarning,
+    duplicateWarning,
+    youtubeHasPodcasts,
+    youtubeAddMode,
   ])
 
   // Renderizar Sheet en mobile, Dialog en desktop
@@ -737,12 +1157,7 @@ export function AddSourceDialog({ open, onOpenChange, onSourceAdded }: AddSource
     return (
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent side="bottom" className="h-[90vh] overflow-y-auto bg-white dark:bg-gray-950 p-0 rounded-t-2xl">
-          {/* Barra de arrastre visual */}
-          <div className="flex justify-center pt-3 pb-2">
-            <div className="w-12 h-1.5 bg-gray-300 dark:bg-gray-700 rounded-full" />
-          </div>
-          
-          <div className="sticky top-0 bg-white dark:bg-gray-950 border-b z-10 px-6 py-4">
+          <div className="sticky top-0 bg-white dark:bg-gray-950 border-b z-10 px-6 py-4 mt-2">
             <SheetHeader>
               <SheetTitle className="text-2xl font-playfair">Add New Source</SheetTitle>
               <SheetDescription>

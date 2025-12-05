@@ -19,6 +19,13 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
+} from '@/components/ui/drawer'
+import {
   Command,
   CommandEmpty,
   CommandGroup,
@@ -30,6 +37,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { folderService } from '@/lib/services/folder-service'
 import type { ArchiveFolder, ArchiveFolderWithChildren } from '@/types/database'
 
@@ -71,7 +79,7 @@ const FOLDER_COLORS = [
 interface FolderPickerProps {
   trigger?: React.ReactNode
   selectedFolderId?: string | null
-  onSelect: (folderId: string | null) => void
+  onSelect: (folderId: string | null) => void | Promise<void>
   onArchive?: () => void
   showCreateNew?: boolean
   align?: 'start' | 'center' | 'end'
@@ -96,6 +104,7 @@ export function FolderPicker({
   const [isCreating, setIsCreating] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
   const [creatingFolder, setCreatingFolder] = useState(false)
+  const isMobile = useIsMobile()
 
   // Cargar carpetas cuando se abre el popover
   const loadFolders = useCallback(async () => {
@@ -149,14 +158,14 @@ export function FolderPicker({
     try {
       const newFolder = await folderService.createFolder(newFolderName.trim())
       if (newFolder) {
-        await loadFolders()
         setNewFolderName('')
         setIsCreating(false)
-        // Seleccionar la nueva carpeta automáticamente
-        onSelect(newFolder.id)
+        // Primero seleccionar la nueva carpeta
+        await onSelect(newFolder.id)
         if (onArchive) {
           onArchive()
         }
+        // Luego cerrar
         setOpen(false)
       }
     } catch (error) {
@@ -167,13 +176,18 @@ export function FolderPicker({
   }
 
   // Seleccionar carpeta
-  const handleSelectFolder = (folderId: string | null) => {
-    onSelect(folderId)
-    if (onArchive) {
-      onArchive()
+  const handleSelectFolder = async (folderId: string | null) => {
+    // Primero ejecutar la acción de guardado
+    try {
+      await onSelect(folderId)
+      if (onArchive) {
+        onArchive()
+      }
+    } finally {
+      // Luego cerrar el picker
+      setOpen(false)
+      setSearchQuery('')
     }
-    setOpen(false)
-    setSearchQuery('')
   }
 
   // Renderizar carpeta con hijos
@@ -190,24 +204,24 @@ export function FolderPicker({
           value={folder.name}
           onSelect={() => handleSelectFolder(folder.id)}
           className={cn(
-            'flex items-center gap-2 cursor-pointer',
+            'flex items-center gap-3 cursor-pointer py-3',
             isSelected && 'bg-accent'
           )}
           style={{ paddingLeft: `${(level + 1) * 12}px` }}
         >
           <div
-            className="flex items-center justify-center w-5 h-5 rounded"
+            className="flex items-center justify-center w-6 h-6 rounded"
             style={{ backgroundColor: folder.color || FOLDER_COLORS[0] + '20' }}
           >
             <Folder
-              className="w-3.5 h-3.5"
+              className="w-4 h-4"
               style={{ color: folder.color || FOLDER_COLORS[0] }}
             />
           </div>
-          <span className="flex-1 truncate">{folder.name}</span>
-          {isSelected && <Check className="w-4 h-4 text-primary" />}
+          <span className="flex-1 truncate text-base">{folder.name}</span>
+          {isSelected && <Check className="w-5 h-5 text-primary" />}
           {hasChildren && (
-            <ChevronRight className="w-3 h-3 text-muted-foreground" />
+            <ChevronRight className="w-4 h-4 text-muted-foreground" />
           )}
         </CommandItem>
         {hasChildren &&
@@ -222,6 +236,149 @@ export function FolderPicker({
     onOpenChange?.(newOpen)
   }
 
+  // Contenido compartido del picker
+  const pickerContent = (
+    <Command shouldFilter={false}>
+      <div className="flex items-center border-b px-3 h-12">
+        <Search className="w-4 h-4 text-muted-foreground mr-2 shrink-0" />
+        <input
+          placeholder="Buscar carpeta..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+        />
+      </div>
+
+      <CommandList className={cn(
+        "overflow-y-auto",
+        isMobile ? "max-h-[50vh]" : "max-h-64"
+      )}>
+        {loading ? (
+          <div className="flex items-center justify-center py-6">
+            <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <>
+            <CommandGroup>
+              {/* Opción sin carpeta (raíz del archivo) */}
+              <CommandItem
+                value="inbox"
+                onSelect={() => handleSelectFolder(null)}
+                className={cn(
+                  'flex items-center gap-3 cursor-pointer py-3',
+                  selectedFolderId === null && 'bg-accent'
+                )}
+              >
+                <div className="flex items-center justify-center w-6 h-6 rounded bg-muted">
+                  <Inbox className="w-4 h-4 text-muted-foreground" />
+                </div>
+                <span className="flex-1 text-base">No folder</span>
+                {selectedFolderId === null && (
+                  <Check className="w-5 h-5 text-primary" />
+                )}
+              </CommandItem>
+
+              {filteredFolders.length > 0 && (
+                <CommandSeparator className="my-1" />
+              )}
+
+              {/* Lista de carpetas */}
+              {filteredFolders.map((folder) => renderFolder(folder))}
+            </CommandGroup>
+
+            {filteredFolders.length === 0 && searchQuery && (
+              <CommandEmpty>
+                No se encontraron carpetas
+              </CommandEmpty>
+            )}
+          </>
+        )}
+      </CommandList>
+
+      {showCreateNew && (
+        <>
+          <CommandSeparator />
+          <div className="p-3">
+            <AnimatePresence mode="wait">
+              {isCreating ? (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="flex items-center gap-2"
+                >
+                  <Input
+                    placeholder="Nombre de la carpeta"
+                    value={newFolderName}
+                    onChange={(e) => setNewFolderName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        handleCreateFolder()
+                      } else if (e.key === 'Escape') {
+                        setIsCreating(false)
+                        setNewFolderName('')
+                      }
+                    }}
+                    className="h-10 text-base"
+                    autoFocus
+                    disabled={creatingFolder}
+                  />
+                  <Button
+                    size="sm"
+                    className="h-10 px-4"
+                    onClick={handleCreateFolder}
+                    disabled={!newFolderName.trim() || creatingFolder}
+                  >
+                    {creatingFolder ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Check className="w-4 h-4" />
+                    )}
+                  </Button>
+                </motion.div>
+              ) : (
+                <motion.button
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => setIsCreating(true)}
+                  className="flex items-center gap-3 w-full px-2 py-2.5 text-base text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
+                >
+                  <FolderPlus className="w-5 h-5" />
+                  <span>Crear nueva carpeta</span>
+                </motion.button>
+              )}
+            </AnimatePresence>
+          </div>
+        </>
+      )}
+    </Command>
+  )
+
+  // En móviles, usar Drawer desde abajo
+  if (isMobile) {
+    return (
+      <Drawer open={open} onOpenChange={handleOpenChange}>
+        <DrawerTrigger asChild onClick={(e) => e.stopPropagation()}>
+          {trigger || (
+            <Button variant="ghost" size="icon" className="h-8 w-8">
+              <Folder className="h-4 w-4" />
+            </Button>
+          )}
+        </DrawerTrigger>
+        <DrawerContent onClick={(e) => e.stopPropagation()}>
+          <DrawerHeader className="pb-2">
+            <DrawerTitle className="text-center">Guardar en carpeta</DrawerTitle>
+          </DrawerHeader>
+          <div className="px-0">
+            {pickerContent}
+          </div>
+        </DrawerContent>
+      </Drawer>
+    )
+  }
+
+  // En desktop, usar Popover
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild onClick={(e) => e.stopPropagation()}>
@@ -239,118 +396,7 @@ export function FolderPicker({
         onClick={(e) => e.stopPropagation()}
         onPointerDownOutside={(e) => e.stopPropagation()}
       >
-        <Command shouldFilter={false}>
-          <div className="flex items-center border-b px-3 h-10">
-            <Search className="w-4 h-4 text-muted-foreground mr-2 shrink-0" />
-            <input
-              placeholder="Buscar carpeta..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-            />
-          </div>
-
-          <CommandList className="max-h-64">
-            {loading ? (
-              <div className="flex items-center justify-center py-6">
-                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-              </div>
-            ) : (
-              <>
-                <CommandGroup>
-                  {/* Opción sin carpeta (raíz del archivo) */}
-                  <CommandItem
-                    value="inbox"
-                    onSelect={() => handleSelectFolder(null)}
-                    className={cn(
-                      'flex items-center gap-2 cursor-pointer',
-                      selectedFolderId === null && 'bg-accent'
-                    )}
-                  >
-                    <div className="flex items-center justify-center w-5 h-5 rounded bg-muted">
-                      <Inbox className="w-3.5 h-3.5 text-muted-foreground" />
-                    </div>
-                    <span className="flex-1">Sin carpeta</span>
-                    {selectedFolderId === null && (
-                      <Check className="w-4 h-4 text-primary" />
-                    )}
-                  </CommandItem>
-
-                  {filteredFolders.length > 0 && (
-                    <CommandSeparator className="my-1" />
-                  )}
-
-                  {/* Lista de carpetas */}
-                  {filteredFolders.map((folder) => renderFolder(folder))}
-                </CommandGroup>
-
-                {filteredFolders.length === 0 && searchQuery && (
-                  <CommandEmpty>
-                    No se encontraron carpetas
-                  </CommandEmpty>
-                )}
-              </>
-            )}
-          </CommandList>
-
-          {showCreateNew && (
-            <>
-              <CommandSeparator />
-              <div className="p-2">
-                <AnimatePresence mode="wait">
-                  {isCreating ? (
-                    <motion.div
-                      initial={{ opacity: 0, y: -10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                      className="flex items-center gap-2"
-                    >
-                      <Input
-                        placeholder="Nombre de la carpeta"
-                        value={newFolderName}
-                        onChange={(e) => setNewFolderName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            handleCreateFolder()
-                          } else if (e.key === 'Escape') {
-                            setIsCreating(false)
-                            setNewFolderName('')
-                          }
-                        }}
-                        className="h-8 text-sm"
-                        autoFocus
-                        disabled={creatingFolder}
-                      />
-                      <Button
-                        size="sm"
-                        className="h-8 px-3"
-                        onClick={handleCreateFolder}
-                        disabled={!newFolderName.trim() || creatingFolder}
-                      >
-                        {creatingFolder ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <Check className="w-3 h-3" />
-                        )}
-                      </Button>
-                    </motion.div>
-                  ) : (
-                    <motion.button
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      onClick={() => setIsCreating(true)}
-                      className="flex items-center gap-2 w-full px-2 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors"
-                    >
-                      <FolderPlus className="w-4 h-4" />
-                      <span>Crear nueva carpeta</span>
-                    </motion.button>
-                  )}
-                </AnimatePresence>
-              </div>
-            </>
-          )}
-        </Command>
+        {pickerContent}
       </PopoverContent>
     </Popover>
   )

@@ -16,7 +16,7 @@ import {
   Headphones,
   type LucideIcon
 } from "lucide-react"
-import type { ContentType, SourceType, RSSContent, YouTubeContent } from "@/types/database"
+import type { ContentType, SourceType, RSSContent, YouTubeContent, PodcastContent } from "@/types/database"
 import type { ContentWithMetadata } from "@/lib/services/content-service"
 
 // ============================================================================
@@ -194,6 +194,13 @@ export function isYouTubeContent(content: ContentWithMetadata): content is Conte
 }
 
 /**
+ * Type guard para verificar si es contenido de Podcast
+ */
+export function isPodcastContent(content: ContentWithMetadata): content is ContentWithMetadata & PodcastContent {
+  return content.content_type === 'podcast'
+}
+
+/**
  * Obtiene el excerpt/descripción del contenido de forma normalizada
  */
 export function getContentExcerpt(content: ContentWithMetadata): string | null {
@@ -201,6 +208,9 @@ export function getContentExcerpt(content: ContentWithMetadata): string | null {
     return content.excerpt || null
   }
   if (isYouTubeContent(content)) {
+    return content.description || null
+  }
+  if (isPodcastContent(content)) {
     return content.description || null
   }
   return null
@@ -216,6 +226,9 @@ export function getContentAuthor(content: ContentWithMetadata): string | null {
   if (isYouTubeContent(content)) {
     return content.channel_name || null
   }
+  if (isPodcastContent(content)) {
+    return content.author || null
+  }
   return null
 }
 
@@ -227,6 +240,9 @@ export function getContentDuration(content: ContentWithMetadata): number | null 
     return content.reading_time || null
   }
   if (isYouTubeContent(content)) {
+    return content.duration || null
+  }
+  if (isPodcastContent(content)) {
     return content.duration || null
   }
   return null
@@ -242,6 +258,10 @@ export function getContentThumbnail(content: ContentWithMetadata): string | null
   if (isYouTubeContent(content)) {
     return content.thumbnail_url || null
   }
+  if (isPodcastContent(content)) {
+    // Usar imagen del episodio, si no hay, usar la del podcast (source)
+    return content.image_url || content.source?.image_url || null
+  }
   return null
 }
 
@@ -256,6 +276,10 @@ export function getContentMediaUrl(content: ContentWithMetadata): string | null 
   if (isYouTubeContent(content)) {
     // Usar la URL del video de YouTube directamente
     return content.url || null
+  }
+  if (isPodcastContent(content)) {
+    // Usar imagen del episodio para podcasts
+    return content.image_url || content.source?.image_url || null
   }
   return null
 }

@@ -55,9 +55,20 @@ const podcastPatterns = [
   /anchor\.fm/i,
   /podcasts\.apple\.com/i,
   /open\.spotify\.com\/show/i,
+  /music\.amazon\.[a-z.]+\/podcasts/i,
   /castbox\.fm/i,
   /overcast\.fm/i,
   /pocketcasts\.com/i,
+  /buzzsprout\.com/i,
+  /transistor\.fm/i,
+  /simplecast\.com/i,
+  /megaphone\.fm/i,
+  /art19\.com/i,
+  /podbean\.com/i,
+  /spreaker\.com/i,
+  /libsyn\.com/i,
+  /audioboom\.com/i,
+  /ivoox\.com/i,
 ]
 
 const twitterPatterns = [
@@ -293,7 +304,7 @@ export async function getYoutubeChannelName(channelUrl: string): Promise<string 
  * También detecta si hubo una redirección a un canal diferente (handles secundarios).
  * 
  * @param channelUrl - URL del canal de YouTube
- * @returns Objeto con channelName, avatarUrl, feedUrl, channelId y info de redirección o null
+ * @returns Objeto con channelName, avatarUrl, feedUrl, channelId, info de podcast y redirección o null
  */
 export async function getYoutubeChannelInfo(channelUrl: string): Promise<{
   channelName: string | null
@@ -304,6 +315,15 @@ export async function getYoutubeChannelInfo(channelUrl: string): Promise<{
   wasRedirected?: boolean
   originalHandle?: string | null
   finalHandle?: string | null
+  hasPodcasts?: boolean
+  podcastPlaylists?: Array<{
+    id: string
+    title: string
+    videoCount: number
+    feedUrl: string
+  }>
+  // Mantener compatibilidad con la playlist principal
+  podcastsUrl?: string | null
 } | null> {
   try {
     const response = await fetch('/api/youtube/channel-info', {
@@ -329,6 +349,9 @@ export async function getYoutubeChannelInfo(channelUrl: string): Promise<{
       wasRedirected: data.wasRedirected || false,
       originalHandle: data.originalHandle || null,
       finalHandle: data.finalHandle || null,
+      hasPodcasts: data.hasPodcasts || false,
+      podcastPlaylists: data.podcastPlaylists || [],
+      podcastsUrl: data.podcastsUrl || null,
     }
   } catch (error) {
     console.error('Error getting YouTube channel info:', error)
@@ -413,5 +436,110 @@ export function getFaviconUrl(url: string): string | null {
     return `https://www.google.com/s2/favicons?domain=${urlObj.origin}&sz=128`
   } catch {
     return null
+  }
+}
+
+// ============================================================================
+// PODCAST UTILITIES
+// ============================================================================
+
+export interface PodcastInfoResult {
+  success: boolean
+  platform: 'spotify' | 'apple' | 'amazon' | 'youtube' | 'rss' | 'unknown'
+  feedUrl?: string
+  title?: string
+  description?: string
+  imageUrl?: string
+  author?: string
+  error?: string
+}
+
+/**
+ * Detecta si una URL es de una plataforma de podcast conocida
+ */
+export function isPodcastUrl(url: string): boolean {
+  try {
+    const urlObj = new URL(url)
+    const host = urlObj.hostname.toLowerCase()
+    const path = urlObj.pathname.toLowerCase()
+    const full = url.toLowerCase()
+
+    // Plataformas principales de podcast
+    if (host.includes('podcasts.apple.com')) return true
+    if (host.includes('open.spotify.com') && full.includes('/show/')) return true
+    if (host.includes('music.amazon') && full.includes('/podcasts/')) return true
+    if (host.includes('youtube.com') && path.includes('/podcasts')) return true
+    
+    // Plataformas de hosting
+    for (const pattern of podcastPatterns) {
+      if (pattern.test(url)) return true
+    }
+    
+    return false
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Obtiene información de un podcast desde múltiples plataformas
+ * Usa el endpoint del servidor para evitar problemas de CORS
+ * 
+ * @param url - URL del podcast (Spotify, Apple, Amazon, YouTube, RSS)
+ * @returns Información del podcast incluyendo feed RSS si está disponible
+ */
+export async function getPodcastInfo(url: string): Promise<PodcastInfoResult> {
+  try {
+    const response = await fetch('/api/feeds/podcast-info', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url }),
+    })
+
+    if (!response.ok) {
+      return {
+        success: false,
+        platform: 'unknown',
+        error: 'Error al obtener información del podcast',
+      }
+    }
+
+    return await response.json()
+  } catch (error) {
+    console.error('Error getting podcast info:', error)
+    return {
+      success: false,
+      platform: 'unknown',
+      error: error instanceof Error ? error.message : 'Error desconocido',
+    }
+  }
+}
+
+/**
+ * Detecta la plataforma de podcast de una URL
+ */
+export function detectPodcastPlatform(url: string): PodcastInfoResult['platform'] {
+  try {
+    const urlObj = new URL(url)
+    const host = urlObj.hostname.toLowerCase()
+    const full = url.toLowerCase()
+
+    if (host.includes('spotify.com')) return 'spotify'
+    if (host.includes('podcasts.apple.com')) return 'apple'
+    if (host.includes('music.amazon')) return 'amazon'
+    if (host.includes('youtube.com') && full.includes('/podcasts')) return 'youtube'
+    
+    // Si parece un feed RSS
+    if (full.endsWith('.xml') || full.endsWith('.rss') || 
+        full.includes('/feed') || full.includes('/rss') ||
+        full.includes('feeds.') || full.includes('anchor.fm')) {
+      return 'rss'
+    }
+
+    return 'unknown'
+  } catch {
+    return 'unknown'
   }
 }

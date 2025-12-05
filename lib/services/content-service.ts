@@ -3,6 +3,7 @@ import type {
   ContentType,
   RSSContent,
   YouTubeContent,
+  PodcastContent,
   UserContent,
   UserContentInsert,
   UserContentUpdate,
@@ -12,7 +13,7 @@ import type {
 import { CONTENT_TYPE_TO_TABLE, ACTIVE_CONTENT_TYPES, ALL_CONTENT_TYPES, type NormalizedContentWithUserData } from '@/types/content'
 
 // Tipo unificado para contenido con metadatos
-export type ContentWithMetadata = (RSSContent | YouTubeContent) & {
+export type ContentWithMetadata = (RSSContent | YouTubeContent | PodcastContent) & {
   content_type: ContentType
   source: ContentSource
   user_source: UserSource | null
@@ -360,6 +361,36 @@ export class ContentService {
   }
 
   /**
+   * Obtiene el estado de user_content para un contenido específico
+   */
+  async getUserContentState(
+    contentType: ContentType,
+    contentId: string
+  ): Promise<UserContent | null> {
+    const supabase = this.getClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    
+    if (!user) return null
+
+    const { data, error } = await supabase
+      .from('user_content')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('content_type', contentType)
+      .eq('content_id', contentId)
+      .single()
+
+    if (error) {
+      // No es un error si no existe el registro
+      if (error.code === 'PGRST116') return null
+      console.error('Error getting user content state:', error)
+      return null
+    }
+
+    return data
+  }
+
+  /**
    * Marca/desmarca contenido como favorito
    */
   async toggleFavorite(
@@ -491,13 +522,214 @@ export class ContentService {
 
   /**
    * Archiva contenido en una carpeta específica
+   * @param episodeData - Datos del episodio para crear el contenido si no existe (para YouTube/podcast sueltos)
    */
   async archiveToFolder(
     contentType: ContentType,
     contentId: string,
-    folderId: string | null
+    folderId: string | null,
+    episodeData?: {
+      title: string
+      url: string
+      source_id: string
+      description?: string | null
+      image_url?: string | null
+      thumbnail_url?: string | null
+      duration?: number | null
+      published_at?: string | null
+      channel_name?: string | null
+      author?: string | null
+      audio_url?: string | null
+    }
   ): Promise<void> {
+    // Si tenemos datos del episodio, asegurar que el contenido existe
+    if (episodeData) {
+      await this.ensureContentExists(contentType, contentId, episodeData)
+    }
     return this.toggleArchive(contentType, contentId, true, folderId)
+  }
+
+  /**
+   * Asegura que el contenido existe en la tabla correspondiente
+   * Crea el registro si no existe
+   */
+  private async ensureContentExists(
+    contentType: ContentType,
+    contentId: string,
+    episodeData: {
+      title: string
+      url: string
+      source_id: string
+      description?: string | null
+      image_url?: string | null
+      thumbnail_url?: string | null
+      duration?: number | null
+      published_at?: string | null
+      channel_name?: string | null
+      author?: string | null
+      audio_url?: string | null
+    }
+  ): Promise<void> {
+    const supabase = this.getClient()
+
+    if (contentType === 'youtube') {
+      const { data: existingContent } = await supabase
+        .from('youtube_content')
+        .select('id')
+        .eq('id', contentId)
+        .maybeSingle()
+
+      if (!existingContent) {
+        const videoIdMatch = episodeData.url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([A-Za-z0-9_-]{11})/)
+        const videoId = videoIdMatch ? videoIdMatch[1] : contentId
+
+        const { error: insertError } = await supabase
+          .from('youtube_content')
+          .insert({
+            id: contentId,
+            source_id: episodeData.source_id,
+            video_id: videoId,
+            title: episodeData.title,
+            url: episodeData.url,
+            channel_name: episodeData.channel_name || episodeData.author || null,
+            published_at: episodeData.published_at || null,
+            description: episodeData.description || null,
+            thumbnail_url: episodeData.thumbnail_url || episodeData.image_url || null,
+            duration: episodeData.duration || null,
+          })
+
+        if (insertError) {
+          console.error('Error creating youtube_content:', insertError)
+        }
+      }
+    }
+
+    if (contentType === 'podcast') {
+      const { data: existingContent } = await supabase
+        .from('podcast_content')
+        .select('id')
+        .eq('id', contentId)
+        .maybeSingle()
+
+      if (!existingContent) {
+        const { error: insertError } = await supabase
+          .from('podcast_content')
+          .insert({
+            id: contentId,
+            source_id: episodeData.source_id,
+            title: episodeData.title,
+            url: episodeData.url,
+            author: episodeData.author || null,
+            published_at: episodeData.published_at || null,
+            description: episodeData.description || null,
+            audio_url: episodeData.audio_url || episodeData.url,
+            image_url: episodeData.image_url || null,
+            duration: episodeData.duration || null,
+          })
+
+        if (insertError) {
+          console.error('Error creating podcast_content:', insertError)
+        }
+      }
+    }
+  }
+
+  /**
+   * Guarda un clip de contenido multimedia (podcast o YouTube)
+   * @param contentType - Tipo de contenido ('podcast' o 'youtube')
+   * @param contentId - ID del contenido
+   * @param clipStart - Segundo de inicio del clip (null = desde el principio)
+   * @param clipEnd - Segundo de fin del clip (null = hasta el final)
+   * @param folderId - ID de la carpeta donde guardar (opcional)
+   * @param episodeData - Datos del episodio para crear el contenido si no existe
+   */
+  async saveClip(
+    contentType: ContentType,
+    contentId: string,
+    clipStart: number | null,
+    clipEnd: number | null,
+    folderId?: string | null,
+    episodeData?: {
+      title: string
+      url: string
+      source_id: string
+      description?: string | null
+      image_url?: string | null
+      thumbnail_url?: string | null
+      duration?: number | null
+      published_at?: string | null
+      channel_name?: string | null
+      author?: string | null
+      audio_url?: string | null
+    }
+  ): Promise<void> {
+    const supabase = this.getClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    
+    if (!user) return
+
+    // Asegurar que el contenido existe en la tabla correspondiente
+    if (episodeData) {
+      await this.ensureContentExists(contentType, contentId, episodeData)
+    }
+
+    // Redondear a enteros (la BD espera INTEGER)
+    const clipStartInt = clipStart !== null ? Math.round(clipStart) : null
+    const clipEndInt = clipEnd !== null ? Math.round(clipEnd) : null
+
+    const updateData: Partial<UserContentInsert> = {
+      user_id: user.id,
+      content_type: contentType,
+      content_id: contentId,
+      is_archived: true,
+      archived_at: new Date().toISOString(),
+      last_accessed_at: new Date().toISOString(),
+      folder_id: folderId ?? null,
+      clip_start_seconds: clipStartInt,
+      clip_end_seconds: clipEndInt
+    }
+
+    const { error } = await supabase
+      .from('user_content')
+      .upsert(updateData, {
+        onConflict: 'user_id,content_type,content_id'
+      })
+
+    if (error) {
+      console.error('Error saving clip:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Actualiza los tiempos de clip de un contenido guardado
+   */
+  async updateClipTimes(
+    contentType: ContentType,
+    contentId: string,
+    clipStart: number | null,
+    clipEnd: number | null
+  ): Promise<void> {
+    const supabase = this.getClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    
+    if (!user) return
+
+    const { error } = await supabase
+      .from('user_content')
+      .update({
+        clip_start_seconds: clipStart,
+        clip_end_seconds: clipEnd,
+        last_accessed_at: new Date().toISOString()
+      })
+      .eq('user_id', user.id)
+      .eq('content_type', contentType)
+      .eq('content_id', contentId)
+
+    if (error) {
+      console.error('Error updating clip times:', error)
+      throw error
+    }
   }
 
   /**
@@ -531,6 +763,8 @@ export class ContentService {
 
   /**
    * Obtiene contenido archivado por carpeta
+   * IMPORTANTE: No usa !inner para user_sources para incluir contenido de fuentes
+   * a las que el usuario no está suscrito
    */
   async getArchivedByFolder(folderId: string | null): Promise<ContentWithMetadata[]> {
     const supabase = this.getClient()
@@ -574,12 +808,12 @@ export class ContentService {
       const table = CONTENT_TYPE_TO_TABLE[type]
       if (!table) continue
 
+      // No usar !inner para permitir contenido de fuentes no suscritas
       const { data: content } = await supabase
         .from(table)
         .select(`
           *,
-          source:content_sources!inner(*),
-          user_source:content_sources!inner(user_sources!inner(*))
+          source:content_sources(*)
         `)
         .in('id', ids)
 
@@ -596,13 +830,34 @@ export class ContentService {
           (userContentData || []).map(uc => [uc.content_id, uc])
         )
 
-        const results = content.map(item => ({
-          ...item,
-          content_type: type as ContentType,
-          user_content: userContentMap.get(item.id) || null
-        })) as ContentWithMetadata[]
+        // Obtener user_source si existe (puede ser null si no está suscrito)
+        for (const item of content) {
+          const { data: userSourceData } = await supabase
+            .from('user_sources')
+            .select('*')
+            .eq('user_id', user.id)
+            .eq('source_id', item.source_id)
+            .maybeSingle()
 
-        allContent.push(...results)
+          // Si no hay source (puede pasar con contenido guardado de fuentes no suscritas),
+          // crear una fuente sintética basada en el tipo de contenido
+          const itemSource = item.source || {
+            id: item.source_id,
+            source_type: type === 'youtube' ? 'youtube_video' : type === 'podcast' ? 'podcast' : 'rss',
+            url: item.url,
+            title: (item as any).channel_name || (item as any).author || item.title,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }
+
+          allContent.push({
+            ...item,
+            source: itemSource,
+            content_type: type as ContentType,
+            user_source: userSourceData || null,
+            user_content: userContentMap.get(item.id) || null
+          } as ContentWithMetadata)
+        }
       }
     }
 
@@ -700,6 +955,8 @@ export class ContentService {
 
   /**
    * Obtiene todo el contenido archivado del usuario
+   * IMPORTANTE: Busca desde user_content primero para incluir contenido de fuentes
+   * a las que el usuario no está suscrito (por ejemplo, clips guardados de videos sueltos)
    */
   async getArchivedContent(contentType?: ContentType): Promise<ContentWithMetadata[]> {
     const supabase = this.getClient()
@@ -707,23 +964,82 @@ export class ContentService {
     
     if (!user) return []
 
-    // Si se especifica un tipo, buscar solo ese
+    // Obtener todos los registros de user_content archivados
+    let userContentQuery = supabase
+      .from('user_content')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('is_archived', true)
+      .order('archived_at', { ascending: false })
+
     if (contentType) {
-      return this.getContentWithUserData({
-        contentType,
-        onlyArchived: true
-      })
+      userContentQuery = userContentQuery.eq('content_type', contentType)
     }
 
-    // Si no, buscar en todos los tipos
+    const { data: archivedUserContent, error: ucError } = await userContentQuery
+
+    if (ucError) {
+      console.error('Error fetching archived user_content:', ucError)
+      return []
+    }
+
+    if (!archivedUserContent || archivedUserContent.length === 0) {
+      return []
+    }
+
+    // Agrupar por tipo de contenido
+    const contentByType = new Map<ContentType, string[]>()
+    for (const uc of archivedUserContent) {
+      const type = uc.content_type as ContentType
+      if (!contentByType.has(type)) {
+        contentByType.set(type, [])
+      }
+      contentByType.get(type)!.push(uc.content_id)
+    }
+
+    // Crear un mapa de user_content para acceso rápido
+    const userContentMap = new Map(
+      archivedUserContent.map(uc => [`${uc.content_type}:${uc.content_id}`, uc])
+    )
+
+    // Obtener el contenido para cada tipo
     const allContent: ContentWithMetadata[] = []
 
-    for (const type of ALL_CONTENT_TYPES) {
-      const content = await this.getContentWithUserData({
-        contentType: type,
-        onlyArchived: true
-      })
-      allContent.push(...content)
+    for (const [type, contentIds] of contentByType) {
+      const table = CONTENT_TYPE_TO_TABLE[type]
+      if (!table) continue
+
+      const { data: content, error } = await supabase
+        .from(table)
+        .select(`
+          *,
+          source:content_sources(*)
+        `)
+        .in('id', contentIds)
+
+      if (error) {
+        console.error(`Error fetching ${type} content:`, error)
+        continue
+      }
+
+      if (content) {
+        for (const item of content) {
+          // Obtener user_source si existe
+          const { data: userSourceData } = await supabase
+            .from('user_sources')
+            .select('*')
+            .eq('user_id', user.id)
+            .eq('source_id', item.source_id)
+            .maybeSingle()
+
+          allContent.push({
+            ...item,
+            content_type: type,
+            user_source: userSourceData || null,
+            user_content: userContentMap.get(`${type}:${item.id}`) || null
+          } as ContentWithMetadata)
+        }
+      }
     }
 
     // Ordenar por fecha de archivo

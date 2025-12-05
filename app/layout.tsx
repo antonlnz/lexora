@@ -7,8 +7,11 @@ import { AuthProvider } from "@/contexts/auth-context"
 import { SubscriptionProvider } from "@/contexts/subscription-context"
 import { InterfaceSettingsProvider } from "@/contexts/interface-settings-context"
 import { PendingDeletionsProvider } from "@/contexts/pending-deletions-context"
+import { PodcastPlayerProvider } from "@/contexts/podcast-player-context"
 import { SessionSyncProvider } from "@/components/session-sync-provider"
 import { ThemeProvider } from "@/components/theme-provider"
+import { MiniPodcastPlayer } from "@/components/mini-podcast-player"
+import { YouTubeBackgroundPlayer } from "@/components/youtube-background-player"
 import "./globals.css"
 
 const inter = Inter({
@@ -34,6 +37,17 @@ export const metadata: Metadata = {
   title: "Lexora - Your Content Universe",
   description: "Centralize all your digital content in one elegant space",
   generator: "Lexora",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Lexora",
+    startupImage: "/placeholder-logo.png",
+  },
+  icons: {
+    icon: "/placeholder-logo.png",
+    apple: "/placeholder-logo.png",
+  },
 }
 
 export const viewport: Viewport = {
@@ -54,7 +68,7 @@ export default function RootLayout({
       <body className="font-sans antialiased bg-background text-foreground">
         <ThemeProvider
           attribute="class"
-          defaultTheme="light"
+          defaultTheme="system"
           enableSystem
           disableTransitionOnChange
         >
@@ -62,9 +76,13 @@ export default function RootLayout({
             <SubscriptionProvider>
               <InterfaceSettingsProvider>
                 <PendingDeletionsProvider>
-                  <SessionSyncProvider>
-                    <Suspense fallback={null}>{children}</Suspense>
-                  </SessionSyncProvider>
+                  <PodcastPlayerProvider>
+                    <SessionSyncProvider>
+                      <Suspense fallback={null}>{children}</Suspense>
+                      <MiniPodcastPlayer />
+                      <YouTubeBackgroundPlayer />
+                    </SessionSyncProvider>
+                  </PodcastPlayerProvider>
                 </PendingDeletionsProvider>
               </InterfaceSettingsProvider>
             </SubscriptionProvider>

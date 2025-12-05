@@ -3,6 +3,7 @@
  * 
  * Maneja fuentes de podcasts (feeds RSS con audio).
  * Detecta automáticamente podcasts y extrae información específica de iTunes/podcast.
+ * También soporta podcasts de YouTube (playlists con contenido de video como podcast).
  */
 
 import Parser from 'rss-parser'
@@ -74,6 +75,39 @@ interface PodcastFeed {
   }
 }
 
+// Tipos para feeds de YouTube
+interface YouTubeFeedItem {
+  title: string
+  link: string
+  id?: string
+  pubDate?: string
+  isoDate?: string
+  author?: string
+  content?: string
+  contentSnippet?: string
+  'yt:videoId'?: string
+  'yt:channelId'?: string
+  'media:group'?: {
+    'media:description': string[]
+    'media:thumbnail': Array<{
+      $: { url: string; width: string; height: string }
+    }>
+    'media:content': Array<{
+      $: { url: string; type: string; duration: string }
+    }>
+  }
+}
+
+interface YouTubeFeed {
+  items: YouTubeFeedItem[]
+  title?: string
+  description?: string
+  link?: string
+  image?: {
+    url: string
+  }
+}
+
 // ============================================================================
 // HANDLER PODCAST
 // ============================================================================
@@ -100,6 +134,7 @@ export class PodcastHandler implements SourceHandler {
   ]
 
   private parser: Parser<PodcastFeed, PodcastFeedItem>
+  private youtubeParser: Parser<YouTubeFeed, YouTubeFeedItem>
   private defaultTimeout = 10000
   private defaultUserAgent = 'Lexora Podcast Reader/1.0'
 
@@ -131,6 +166,28 @@ export class PodcastHandler implements SourceHandler {
         ],
       },
     })
+
+    // Parser específico para feeds de YouTube
+    this.youtubeParser = new Parser({
+      timeout: this.defaultTimeout,
+      headers: {
+        'User-Agent': this.defaultUserAgent,
+      },
+      customFields: {
+        item: [
+          ['yt:videoId', 'yt:videoId'],
+          ['yt:channelId', 'yt:channelId'],
+          ['media:group', 'media:group'],
+        ],
+      },
+    })
+  }
+
+  /**
+   * Detecta si una URL es un feed de YouTube
+   */
+  private isYouTubeFeed(url: string): boolean {
+    return url.includes('youtube.com/feeds/videos.xml')
   }
 
   // ==========================================================================
@@ -186,6 +243,11 @@ export class PodcastHandler implements SourceHandler {
 
   async fetchFeed(url: string, options?: HandlerOptions): Promise<FeedInfo | null> {
     try {
+      // Si es un feed de YouTube, usar el parser de YouTube
+      if (this.isYouTubeFeed(url)) {
+        return this.fetchYouTubeFeed(url)
+      }
+
       const feed = await this.parser.parseURL(url)
       
       const items: ProcessedContentItem[] = feed.items.map(item => ({
@@ -217,6 +279,136 @@ export class PodcastHandler implements SourceHandler {
       console.error(`Error fetching podcast feed ${url}:`, error)
       return null
     }
+  }
+
+  /**
+   * Obtiene un feed de YouTube y lo convierte a formato de podcast
+   */
+  private async fetchYouTubeFeed(url: string): Promise<FeedInfo | null> {
+    try {
+      const feed = await this.youtubeParser.parseURL(url)
+      
+      const items: ProcessedContentItem[] = feed.items.map(item => {
+        const videoId = this.extractYouTubeVideoId(item)
+        const media = this.extractYouTubeMediaInfo(item, videoId)
+        
+        return {
+          url: item.link || `https://www.youtube.com/watch?v=${videoId}`,
+          title: item.title || 'Sin título',
+          content: this.extractYouTubeDescription(item),
+          excerpt: this.extractYouTubeExcerpt(item),
+          author: item.author || feed.title || null,
+          publishedAt: item.isoDate || item.pubDate || new Date().toISOString(),
+          media,
+          readingTime: null,
+          wordCount: null,
+          metadata: {
+            videoId,
+            channelId: item['yt:channelId'],
+            channelName: item.author || feed.title,
+            isYouTubePodcast: true,
+          },
+        }
+      })
+
+      return {
+        title: feed.title || 'YouTube Podcast',
+        description: feed.description || null,
+        imageUrl: feed.image?.url || null,
+        items,
+      }
+    } catch (error) {
+      console.error(`Error fetching YouTube podcast feed ${url}:`, error)
+      return null
+    }
+  }
+
+  /**
+   * Extrae el ID del video de YouTube de un item del feed
+   */
+  private extractYouTubeVideoId(item: YouTubeFeedItem): string {
+    if (item['yt:videoId']) {
+      return item['yt:videoId']
+    }
+    if (item.id) {
+      const match = item.id.match(/video:([A-Za-z0-9_-]+)/)
+      if (match) return match[1]
+    }
+    if (item.link) {
+      const patterns = [
+        /youtube\.com\/watch\?v=([A-Za-z0-9_-]+)/,
+        /youtu\.be\/([A-Za-z0-9_-]+)/,
+      ]
+      for (const pattern of patterns) {
+        const match = item.link.match(pattern)
+        if (match) return match[1]
+      }
+    }
+    return ''
+  }
+
+  /**
+   * Extrae información de media de un video de YouTube para tratarlo como episodio
+   */
+  private extractYouTubeMediaInfo(item: YouTubeFeedItem, videoId: string): MediaInfo {
+    let thumbnailUrl: string | null = null
+    let duration: number | null = null
+
+    // Extraer de media:group
+    if (item['media:group']) {
+      const mediaGroup = item['media:group']
+      
+      // Thumbnail
+      if (mediaGroup['media:thumbnail']?.length) {
+        const thumbnails = mediaGroup['media:thumbnail'].sort(
+          (a, b) => parseInt(b.$.width || '0') - parseInt(a.$.width || '0')
+        )
+        thumbnailUrl = thumbnails[0]?.$.url || null
+      }
+      
+      // Duration
+      if (mediaGroup['media:content']?.length) {
+        const durationStr = mediaGroup['media:content'][0]?.$?.duration
+        if (durationStr) {
+          duration = parseInt(durationStr, 10)
+        }
+      }
+    }
+
+    // Fallback a thumbnail estándar de YouTube
+    if (!thumbnailUrl && videoId) {
+      thumbnailUrl = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`
+    }
+
+    // Para podcasts de YouTube, tratamos el video como el "audio"
+    // La URL del video será usada como audio_url en podcast_content
+    return {
+      mediaType: 'video', // Se marca como video para que la UI sepa cómo renderizarlo
+      mediaUrl: videoId ? `https://www.youtube.com/watch?v=${videoId}` : null,
+      thumbnailUrl,
+      duration,
+    }
+  }
+
+  /**
+   * Extrae la descripción del video de YouTube
+   */
+  private extractYouTubeDescription(item: YouTubeFeedItem): string | null {
+    if (item['media:group']?.['media:description']?.length) {
+      return item['media:group']['media:description'][0]
+    }
+    return item.content || item.contentSnippet || null
+  }
+
+  /**
+   * Extrae un excerpt de la descripción del video
+   */
+  private extractYouTubeExcerpt(item: YouTubeFeedItem): string | null {
+    const description = this.extractYouTubeDescription(item)
+    if (!description) return null
+    return description.length > 300 
+      ? description.substring(0, 297) + '...' 
+      : description
   }
 
   // ==========================================================================

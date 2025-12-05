@@ -384,4 +384,31 @@
     min-height: 100vh;
     min-height: 100dvh;
   }
+  
+  /* Padding top para contenido debajo de la navegación - respeta safe area en PWA */
+  .pt-nav {
+    padding-top: 4rem; /* 64px - altura de la navegación */
+  }
+  
+  @media (display-mode: standalone) {
+    .pt-nav {
+      padding-top: calc(4rem + env(safe-area-inset-top, 0px));
+    }
+  }
+  
+  /* Podcast viewer tabs - diferentes posiciones según el modo */
+  .podcast-tabs-offset {
+    padding-top: 48px; /* Browser mode - más abajo */
+  }
+  
+  @media (display-mode: standalone) {
+    .podcast-tabs-offset {
+      padding-top: calc(env(safe-area-inset-top, 0px) + 20px); /* PWA mode - más arriba */
+    }
+  }
+  
+  /* Text glow effect para slider timestamps */
+  .text-shadow-glow {
+    text-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+  }
 }

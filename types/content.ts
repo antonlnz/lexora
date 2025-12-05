@@ -64,7 +64,7 @@ export const ALL_CONTENT_TYPES = Object.keys(CONTENT_TYPE_TO_TABLE) as ContentTy
  * Tipos de contenido actualmente implementados/soportados
  * (excluye los que aún no tienen handler completo)
  */
-export const ACTIVE_CONTENT_TYPES: ContentType[] = ['rss', 'youtube']
+export const ACTIVE_CONTENT_TYPES: ContentType[] = ['rss', 'youtube', 'podcast']
 
 /**
  * Mapea un tipo de fuente a su tipo de contenido
