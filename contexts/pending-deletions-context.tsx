@@ -154,9 +154,9 @@ function PendingDeletionsWidget() {
   if (pendingDeletions.length === 0) return null
 
   return (
-    <div
-      className="fixed z-70 left-3 right-3 md:left-1/2 md:right-auto md:-translate-x-1/2 md:max-w-md md:w-full flex flex-col gap-3"
-      style={{ bottom: 'calc(5.5rem + env(safe-area-inset-bottom, 0px))' }}
+    <div 
+      className="fixed right-6 z-50 flex flex-col gap-3"
+      style={{ bottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}
     >
       {pendingDeletions.map((deletion, index) => (
         <div 

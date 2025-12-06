@@ -9,9 +9,9 @@ import { Card } from "@/components/ui/card"
 import { Bookmark, BookmarkCheck, Clock, ExternalLink, Play, Share, User, Eye, ThumbsUp, Loader2 } from "lucide-react"
 import { contentService, type ContentWithMetadata } from "@/lib/services/content-service"
 import { FolderPicker } from "@/components/folder-picker"
-import { 
-  getSourceTypeIcon, 
-  getSourceTypeLabel, 
+import {
+  getSourceTypeIcon,
+  getSourceTypeLabel,
   getSourceTypeColor,
   getContentExcerpt,
   getContentAuthor,
@@ -38,15 +38,15 @@ interface ContentCardProps {
 // Función auxiliar para calcular tiempo relativo
 function getRelativeTime(date: string | null): string {
   if (!date) return "Unknown"
-  
+
   const now = new Date()
   const publishedDate = new Date(date)
   const diffInMs = now.getTime() - publishedDate.getTime()
-  
+
   const minutes = Math.floor(diffInMs / 60000)
   const hours = Math.floor(diffInMs / 3600000)
   const days = Math.floor(diffInMs / 86400000)
-  
+
   if (minutes < 60) return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`
   if (hours < 24) return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`
   return `${days} ${days === 1 ? 'day' : 'days'} ago`
@@ -57,7 +57,7 @@ function formatVideoDuration(seconds: number): string {
   const hours = Math.floor(seconds / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
   const secs = seconds % 60
-  
+
   if (hours > 0) {
     return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
   }
@@ -67,13 +67,13 @@ function formatVideoDuration(seconds: number): string {
 // Función para obtener el thumbnail de un video de YouTube
 function getYouTubeThumbnail(url: string | null | undefined): string | null {
   if (!url) return null
-  
+
   // Extraer el ID del video de YouTube
   const patterns = [
     /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\?\/]+)/,
     /youtube\.com\/shorts\/([^&\?\/]+)/
   ]
-  
+
   for (const pattern of patterns) {
     const match = url.match(pattern)
     if (match && match[1]) {
@@ -81,7 +81,7 @@ function getYouTubeThumbnail(url: string | null | undefined): string | null {
       return `https://img.youtube.com/vi/${match[1]}/maxresdefault.jpg`
     }
   }
-  
+
   return null
 }
 
@@ -90,13 +90,13 @@ function getVideoThumbnail(article: ContentWithMetadata): string | null {
   // 1. Usar el helper centralizado primero
   const thumbnail = getContentThumbnail(article)
   if (thumbnail) return thumbnail
-  
+
   // 2. Si es YouTube, extraer el thumbnail de la URL
   if (article.source.source_type === 'youtube_channel' || article.source.source_type === 'youtube_video') {
     const ytThumbnail = getYouTubeThumbnail(article.url)
     if (ytThumbnail) return ytThumbnail
   }
-  
+
   // 3. Fallback a null (sin thumbnail)
   return null
 }
@@ -108,7 +108,7 @@ function getVideoUrl(article: ContentWithMetadata): string | null {
   if (article.source.source_type === 'youtube_channel' || article.source.source_type === 'youtube_video') {
     return null
   }
-  
+
   // Para otros videos (RSS con video embebido), usar el helper centralizado
   const mediaType = getContentMediaType(article)
   if (mediaType === 'video') {
@@ -131,13 +131,13 @@ function isVideoContent(article: ContentWithMetadata): boolean {
 function getSmartExcerpt(article: ContentWithMetadata): string | null {
   const excerpt = getContentExcerpt(article)
   if (excerpt) return excerpt
-  
+
   // Para videos sin descripción (como Shorts), no mostrar nada
   // en lugar de "No excerpt available"
   if (checkIsVideoContent(article)) {
     return null
   }
-  
+
   return null
 }
 
@@ -146,7 +146,7 @@ function TypeBadge({ sourceType, className = "" }: { sourceType: SourceType; cla
   const IconComponent = getSourceTypeIcon(sourceType)
   const colorClass = getSourceTypeColor(sourceType)
   const label = getSourceTypeLabel(sourceType)
-  
+
   return (
     <Badge variant="outline" className={`${colorClass} ${className}`}>
       <IconComponent className="h-3 w-3 mr-1" />
@@ -164,7 +164,7 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
   const [savingToFolder, setSavingToFolder] = useState(false)
   const cardRef = useRef<HTMLDivElement>(null)
   const pointerDownTarget = useRef<EventTarget | null>(null)
-  
+
   // Get display settings from context
   const { showThumbnails, showExcerpts, compactView } = useCardDisplaySettings()
 
@@ -223,6 +223,7 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
 
   const handleOpenContent = () => {
     if (onOpenViewer && cardRef.current) {
+      console.log('[ContentCard] Opening viewer for article:', article.id)
       onOpenViewer(article, cardRef.current)
     }
   }
@@ -237,7 +238,7 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
     // y no fue en un elemento interactivo (botones, links, etc.)
     const target = e.target as HTMLElement
     const isInteractive = target.closest('button, a, [role="button"], [data-radix-collection-item]')
-    
+
     if (!isInteractive && pointerDownTarget.current === e.target) {
       handleOpenContent()
     }
@@ -252,10 +253,10 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
   const relativeTime = getRelativeTime(article.published_at)
   const readingTime = getContentDuration(article)
   const readTime = readingTime ? `${readingTime} min read` : undefined
-  
+
   // Detectar si es video usando la nueva función helper
   const isVideo = isVideoContent(article)
-  
+
   // Obtener URLs de video y thumbnail
   const videoSrc = getVideoUrl(article)
   const posterSrc = isVideo ? getVideoThumbnail(article) : getContentMediaUrl(article)
@@ -265,13 +266,13 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
   // Duración del video (si está disponible)
   const videoDuration = isVideo ? getContentDuration(article) : null
   const videoDurationFormatted = formatDuration(videoDuration)
-  
+
   // Estadísticas de video (YouTube)
   const viewCount = getContentViewCount(article)
   const likeCount = getContentLikeCount(article)
   const viewCountFormatted = formatCount(viewCount)
   const likeCountFormatted = formatCount(likeCount)
-  
+
   // Verificar si es contenido de YouTube (no se puede cargar directamente en <video>)
   const isYouTube = isYouTubeContent(article)
 
@@ -290,14 +291,14 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
                 <>
                   {/* Si hay poster, mostrarlo como fondo */}
                   {posterSrc && (
-                    <img 
+                    <img
                       src={posterSrc}
                       alt={article.title}
                       className="absolute inset-0 w-full h-full object-cover"
                     />
                   )}
                   {/* Video siempre visible - si no hay poster, el atributo preload="metadata" cargará el primer frame */}
-                  <video 
+                  <video
                     src={videoSrc}
                     poster={posterSrc || undefined}
                     className="relative w-full h-full object-cover"
@@ -327,9 +328,9 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
               ) : isYouTube || isVideo ? (
                 // YouTube o video sin src: mostrar thumbnail con overlay de play
                 <>
-                  <img 
-                    src={imageSrc} 
-                    alt={article.title} 
+                  <img
+                    src={imageSrc}
+                    alt={article.title}
                     className="w-full h-full object-cover"
                   />
                   {/* Overlay de play para videos */}
@@ -347,9 +348,9 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
                 </>
               ) : (
                 // Usar img normal para imágenes
-                <img 
-                  src={imageSrc} 
-                  alt={article.title} 
+                <img
+                  src={imageSrc}
+                  alt={article.title}
                   className="w-full h-full object-cover"
                 />
               )}
@@ -362,9 +363,9 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
                 {!compactView && <TypeBadge sourceType={sourceType as SourceType} />}
                 <div className="flex items-center gap-1.5">
                   {article.source.favicon_url ? (
-                    <img 
-                      src={article.source.favicon_url} 
-                      alt="" 
+                    <img
+                      src={article.source.favicon_url}
+                      alt=""
                       className="h-4 w-4 rounded-sm object-cover"
                       onError={(e) => e.currentTarget.style.display = 'none'}
                     />
@@ -374,10 +375,10 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
               </div>
               <div className="flex items-center gap-1">
                 {isSaved ? (
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={handleToggleArchive} 
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleToggleArchive}
                     className="h-8 w-8 p-0 hover-lift-subtle"
                     title="Quitar del archivo"
                   >
@@ -388,9 +389,9 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
                     selectedFolderId={currentFolderId}
                     onSelect={handleSaveToFolder}
                     trigger={
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         className="h-8 w-8 p-0 hover-lift-subtle"
                         onClick={(e) => e.stopPropagation()}
                         disabled={savingToFolder}
@@ -484,7 +485,10 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
       onClick={handleClick}
     >
       {showThumbnails && (
-        <div className={`relative ${compactView ? 'aspect-2/1' : 'aspect-video'} overflow-hidden bg-muted rounded-t-xl`}>
+        <div
+          className={`relative ${compactView ? 'aspect-2/1' : 'aspect-video'} overflow-hidden bg-muted rounded-t-xl`}
+          data-flip-id={`card-image-${article.id}`}
+        >
           {isVideo && videoSrc && !isYouTube ? (
             <>
               {/* Si hay poster, mostrarlo como fondo */}
@@ -562,9 +566,9 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
         <div className="flex items-start justify-between gap-2 mb-2">
           <div className="flex items-center gap-1.5">
             {article.source.favicon_url ? (
-              <img 
-                src={article.source.favicon_url} 
-                alt="" 
+              <img
+                src={article.source.favicon_url}
+                alt=""
                 className="h-4 w-4 rounded-sm object-cover"
                 onError={(e) => e.currentTarget.style.display = 'none'}
               />
@@ -573,10 +577,10 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
           </div>
           <div className="flex items-center gap-1">
             {isSaved ? (
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={handleToggleArchive} 
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleToggleArchive}
                 className="h-8 w-8 p-0"
                 title="Quitar del archivo"
               >
@@ -587,9 +591,9 @@ export function ContentCard({ article, viewMode, onOpenViewer, onUnarchive }: Co
                 selectedFolderId={currentFolderId}
                 onSelect={handleSaveToFolder}
                 trigger={
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     className="h-8 w-8 p-0"
                     onClick={(e) => e.stopPropagation()}
                     disabled={savingToFolder}

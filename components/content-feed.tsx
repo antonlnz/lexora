@@ -377,14 +377,17 @@ export function ContentFeed() {
 
   // Helper para abrir el visor correcto según el tipo de contenido
   const openCorrectViewer = useCallback((content: ContentWithMetadata) => {
+    console.log('[openCorrectViewer] Opening viewer for content:', content.id)
     // Actualizar URL solo si no estamos abriendo desde URL
     if (!isOpeningFromUrl.current) {
       // Marcar que estamos abriendo manualmente para evitar que el efecto de cierre interfiera
       isOpeningManually.current = true
+      console.log('[openCorrectViewer] Updating URL for viewer')
       const slug = generateContentSlug(content.id, content.title)
       const params = new URLSearchParams(searchParams.toString())
       params.set('viewer', slug)
       router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+      console.log('[openCorrectViewer] URL updated')
       // Desmarcar después de un breve delay para dar tiempo a que la URL se actualice
       setTimeout(() => {
         isOpeningManually.current = false
@@ -450,9 +453,11 @@ export function ContentFeed() {
     } else {
       // Cerrar PodcastViewer si está abierto
       if (isPodcastViewerOpen) {
+        console.log('[openCorrectViewer] Closing PodcastViewer')
         setIsPodcastViewerOpen(false)
       }
       
+      console.log('[openCorrectViewer] Using ContentViewer for content:', content.id)
       // Usar ContentViewer
       setViewerContent(content)
       setIsViewerOpen(true)
@@ -460,8 +465,11 @@ export function ContentFeed() {
   }, [articles, isViewerOpen, isPodcastViewerOpen, searchParams, pathname, router])
 
   const handleOpenViewer = (content: ContentWithMetadata, cardElement: HTMLElement) => {
+    console.log('[handleOpenViewer] Opening viewer for content:', content.id)
     const rect = cardElement.getBoundingClientRect()
+    console.log('[handleOpenViewer] Card position:', rect)
     setCardPosition(rect)
+    console.log('[handleOpenViewer] Calling openCorrectViewer')
     openCorrectViewer(content)
   }
   
