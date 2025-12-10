@@ -38,7 +38,7 @@ export const FONTS: FontConfig[] = [
     cssValue: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
     description: 'Default system font',
   },
-  
+
   // Sans-serif fonts
   {
     id: 'inter',
@@ -48,7 +48,7 @@ export const FONTS: FontConfig[] = [
     description: 'Modern, clean sans-serif',
     requiresLoad: true,
   },
-  
+
   // Serif fonts
   {
     id: 'playfair',
@@ -65,7 +65,7 @@ export const FONTS: FontConfig[] = [
     cssValue: 'Baskerville, "Baskerville Old Face", "Hoefler Text", Garamond, "Times New Roman", serif',
     description: 'Classic transitional serif',
   },
-  
+
   // Monospace fonts
   {
     id: 'monospace',
@@ -90,7 +90,7 @@ export const FONTS: FontConfig[] = [
     description: 'Programming font with ligatures',
     requiresLoad: true,
   },
-  
+
   // Display/Special fonts
   {
     id: 'moneta',
@@ -115,7 +115,23 @@ export const FONTS: FontConfig[] = [
     cssValue: '"Lettera Mono LL", "SF Mono", Menlo, Monaco, monospace',
     description: 'Classic typewriter-style monospace',
     requiresLoad: true,
- },
+  },
+  {
+    id: 'lora',
+    name: 'Lora',
+    category: 'serif',
+    cssValue: 'var(--font-lora), "Lora", serif',
+    description: 'Elegant serif for text',
+    requiresLoad: true,
+  },
+  {
+    id: 'space-grotesk',
+    name: 'Space Grotesk',
+    category: 'sans-serif',
+    cssValue: 'var(--font-space-grotesk), "Space Grotesk", Inter, sans-serif',
+    description: 'Modern geometric sans-serif',
+    requiresLoad: true,
+  },
 ]
 
 /**
@@ -146,9 +162,9 @@ export function getFontsByCategory(category: FontConfig['category']): FontConfig
  */
 export function searchFonts(query: string): FontConfig[] {
   if (!query.trim()) return FONTS
-  
+
   const lowerQuery = query.toLowerCase()
-  return FONTS.filter(font => 
+  return FONTS.filter(font =>
     font.name.toLowerCase().includes(lowerQuery) ||
     font.category.toLowerCase().includes(lowerQuery) ||
     font.description?.toLowerCase().includes(lowerQuery)
